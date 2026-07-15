@@ -893,6 +893,9 @@ function renderResults(area, nodes){
     const sum = doneRows.reduce((s,r)=> s + (Number(r.previewResult) || 0), 0);
     totalDone += sum;
 
+    const minStart = rs.reduce((m,r)=> (!m || r.startDate < m) ? r.startDate : m, null);
+    const maxEnd = rs.reduce((m,r)=> (!m || r.endDate > m) ? r.endDate : m, null);
+
     let statusLabel, statusClass;
     if(failedRows.length){
       statusLabel = "ERROR";
@@ -915,7 +918,7 @@ function renderResults(area, nodes){
       statusClass = "st-progress";
     }
 
-    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0 };
+    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0, minStart, maxEnd };
   });
 
   rows.sort((a,b)=> b.sum - a.sum);
@@ -935,6 +938,10 @@ function renderResults(area, nodes){
     html += `<div class="msg info">Still previewing: ${waitingOn || "…"}. The numbers below update automatically as each source finishes — nothing here needs a refresh.</div>`;
   }
 
+  const overallStart = rows.reduce((m,r)=> (r.minStart && (!m || r.minStart < m)) ? r.minStart : m, null);
+  const overallEnd = rows.reduce((m,r)=> (r.maxEnd && (!m || r.maxEnd > m)) ? r.maxEnd : m, null);
+  const sameWindowThroughout = rows.every(r => r.minStart === overallStart && r.maxEnd === overallEnd);
+
   html += `
     <div class="summary">
       <div class="card total">
@@ -949,9 +956,13 @@ function renderResults(area, nodes){
         <div class="label">Sources done</div>
         <div class="value" style="font-size:15px;">${rows.filter(r=>r.statusClass==="st-success").length} / ${rows.length}</div>
       </div>
+      <div class="card">
+        <div class="label">Date range</div>
+        <div class="value" style="font-size:15px;">${fmtDate(overallStart)} → ${fmtDate(overallEnd)}${sameWindowThroughout ? "" : " *"}</div>
+      </div>
     </div>
     <table class="breakdown">
-      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Status</th></tr></thead>
+      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Window</th><th>Status</th></tr></thead>
       <tbody>`;
   rows.forEach(r=>{
     const pct = (totalDone && r.hasValue) ? (r.sum / totalDone * 100) : null;
@@ -959,12 +970,16 @@ function renderResults(area, nodes){
       <td>${categoryLabel(r.cat)}</td>
       <td class="num">${r.hasValue ? r.sum.toLocaleString() : "—"}</td>
       <td class="num">${pct != null ? pct.toFixed(1) + "%" : "—"}</td>
+      <td>${fmtDate(r.minStart)} → ${fmtDate(r.maxEnd)}</td>
       <td><span class="badge ${r.statusClass}">${r.statusLabel}</span></td>
     </tr>`;
   });
   html += `</tbody></table>`;
   if(anyPending){
     html += `<div class="hint">* percentages are of the total previewed so far, and will shift as the remaining sources complete.</div>`;
+  }
+  if(!sameWindowThroughout){
+    html += `<div class="hint">* the top date range spans the earliest start to the latest end across all rows — categories don't all share the same window here, so check the per-row Window column for the exact range on each.</div>`;
   }
   area.innerHTML = html;
 }
