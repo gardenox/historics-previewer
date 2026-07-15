@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Historics Manifest — Pulsar</title>
+<style>
+  :root{
+    --bg:#12151a;
+    --panel:#1b1f27;
+    --panel-2:#20252e;
+    --line:#2a3040;
+    --text:#e8eaed;
+    --muted:#8b93a1;
+    --muted-2:#5a6270;
+    --accent:#4fd1c5;
+    --pending:#f5a623;
+    --done:#3ecf8e;
+    --error:#e5484d;
+    --mono: "SFMono-Regular","Consolas","Liberation Mono","Menlo",monospace;
+    --sans: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    min-height:100vh;
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:28px 20px 80px;}
+
+  /* header */
+  .topbar{
+    display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:1px solid var(--line);
+    padding-bottom:14px;margin-bottom:24px;
+  }
+  .brand{
+    font-family:var(--mono);
+    letter-spacing:0.5px;
+    font-size:13px;
+    color:var(--muted);
+    text-transform:uppercase;
+  }
+  .brand b{color:var(--text);}
+  h1{
+    font-size:20px;
+    font-weight:600;
+    margin:2px 0 0;
+    letter-spacing:-0.2px;
+  }
+  .conn-status{
+    font-family:var(--mono);
+    font-size:12px;
+    display:flex;align-items:center;gap:6px;
+  }
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--muted-2);}
+  .dot.on{background:var(--done);box-shadow:0 0 6px var(--done);}
+  .dot.off{background:var(--error);}
+
+  /* token gate */
+  .gate{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:22px;
+    margin-bottom:22px;
+  }
+  .gate.connected{border-color:var(--done);}
+  label{
+    display:block;font-size:12px;color:var(--muted);
+    margin-bottom:6px;text-transform:uppercase;letter-spacing:0.4px;
+  }
+  input[type=text],input[type=password],select{
+    width:100%;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    padding:9px 10px;
+    border-radius:3px;
+    font-family:var(--mono);
+    font-size:13px;
+  }
+  input:focus,select:focus{outline:1px solid var(--accent);border-color:var(--accent);}
+  .row{display:flex;gap:12px;flex-wrap:wrap;}
+  .row > div{flex:1;min-width:160px;}
+  .field{margin-bottom:14px;}
+  .hint{font-size:12px;color:var(--muted-2);margin-top:5px;line-height:1.4;}
+
+  button{
+    font-family:var(--sans);
+    font-weight:600;
+    font-size:13px;
+    border:1px solid var(--accent);
+    background:transparent;
+    color:var(--accent);
+    padding:9px 16px;
+    border-radius:3px;
+    cursor:pointer;
+    transition:background .15s;
+  }
+  button:hover{background:rgba(79,209,197,0.1);}
+  button:disabled{opacity:0.35;cursor:not-allowed;}
+  button.solid{background:var(--accent);color:#0a0d10;}
+  button.solid:hover{background:#6adfd4;}
+  button.ghost{border-color:var(--line);color:var(--muted);}
+  button.ghost:hover{background:var(--panel-2);}
+  button.danger{border-color:var(--error);color:var(--error);}
+
+  /* tabs */
+  .tabs{display:flex;gap:2px;margin-bottom:0;}
+  .tab{
+    font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:0.4px;
+    padding:10px 16px;cursor:pointer;color:var(--muted);
+    border:1px solid var(--line);border-bottom:none;
+    background:var(--panel-2);
+    border-radius:4px 4px 0 0;
+  }
+  .tab.active{color:var(--text);background:var(--panel);border-color:var(--line);position:relative;top:1px;}
+  .tabpanel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:0 4px 4px 4px;
+    padding:22px;
+    display:none;
+  }
+  .tabpanel.active{display:block;}
+
+  /* per-search cards */
+  .tab-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px;}
+  .card-block{
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:18px;
+    margin-bottom:16px;
+    background:var(--panel-2);
+  }
+  .card-block-head{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line);
+  }
+  .card-block-title{
+    font-family:var(--mono);font-size:12px;text-transform:uppercase;
+    letter-spacing:0.4px;color:var(--muted);
+  }
+
+  /* search-name picker */
+  .searchpicker{position:relative;}
+  .sp-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .sp-row label{margin-bottom:0;}
+  .sp-toggle-mode{padding:3px 8px;font-size:11px;}
+  .sp-panel{
+    display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;
+    max-height:260px;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:4px;z-index:20;
+    padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  }
+  .sp-panel.open{display:block;}
+  .sp-item{padding:7px 9px;border-radius:3px;cursor:pointer;}
+  .sp-item:hover{background:var(--panel-2);}
+  .sp-item-name{font-family:var(--sans);font-size:13px;color:var(--text);}
+  .sp-item-meta{font-family:var(--mono);font-size:11px;color:var(--muted-2);margin-top:2px;}
+  .sp-empty{padding:10px;font-family:var(--mono);font-size:12px;color:var(--muted-2);}
+
+  /* multiselect dropdown */
+  .multiselect{position:relative;}
+  .ms-toggle{
+    width:100%;text-align:left;
+    background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font-family:var(--mono);font-size:13px;padding:9px 10px;border-radius:3px;
+    cursor:pointer;
+  }
+  .ms-panel{
+    display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;
+    max-height:280px;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:4px;z-index:20;
+    padding:6px;box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  }
+  .ms-panel.open{display:block;}
+  .ms-item{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:3px;
+    font-family:var(--mono);font-size:12.5px;cursor:pointer;
+  }
+  .ms-item:hover{background:var(--panel-2);}
+  .ms-item input{width:auto;margin:0;}
+
+  /* calendar range picker */
+  .daterange{position:relative;}
+  .dr-toggle{
+    width:100%;text-align:left;
+    background:var(--panel);border:1px solid var(--line);color:var(--text);
+    font-family:var(--mono);font-size:13px;padding:9px 10px;border-radius:3px;
+    cursor:pointer;
+  }
+  .dr-panel{
+    display:none;position:absolute;top:calc(100% + 4px);left:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    z-index:20;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,0.4);width:250px;
+  }
+  .dr-panel.open{display:block;}
+  .dr-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-family:var(--mono);font-size:12.5px;}
+  .dr-nav button{padding:2px 8px;font-size:12px;}
+  .dr-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .dr-dow{font-size:10px;color:var(--muted-2);text-align:center;padding:4px 0;font-family:var(--mono);}
+  .dr-cell{
+    font-family:var(--mono);font-size:12px;text-align:center;padding:6px 0;
+    border-radius:3px;cursor:pointer;color:var(--text);
+  }
+  .dr-cell.dr-empty{cursor:default;}
+  .dr-cell.dr-day:hover{background:var(--panel-2);}
+  .dr-cell.dr-start,.dr-cell.dr-end{background:var(--accent);color:#0a0d10;font-weight:600;}
+  .dr-cell.dr-inrange{background:rgba(79,209,197,0.18);}
+  .dr-actions{display:flex;justify-content:flex-end;margin-top:8px;}
+
+  .msg{
+    font-family:var(--mono);font-size:12.5px;
+    padding:10px 12px;border-radius:3px;margin-top:12px;
+    border:1px solid var(--line);
+  }
+  .msg.error{border-color:var(--error);color:var(--error);background:rgba(229,72,77,0.08);}
+  .msg.ok{border-color:var(--done);color:var(--done);background:rgba(62,207,142,0.08);}
+  .msg.info{color:var(--muted);}
+
+  .badge{
+    display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:2px;
+    text-transform:uppercase;letter-spacing:0.3px;font-weight:600;
+  }
+  .badge.st-success{background:rgba(62,207,142,0.15);color:var(--done);}
+  .badge.st-progress{background:rgba(79,209,197,0.15);color:var(--accent);}
+  .badge.st-error{background:rgba(229,72,77,0.15);color:var(--error);}
+  .badge.st-archived{background:rgba(139,147,161,0.15);color:var(--muted);}
+  .num{text-align:right;}
+
+  /* summary */
+  .summary{display:flex;gap:14px;margin-top:20px;flex-wrap:wrap;}
+  .card{
+    flex:1;min-width:160px;
+    background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:16px;
+  }
+  .card .label{font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:0.4px;}
+  .card .value{font-family:var(--mono);font-size:26px;margin-top:6px;color:var(--text);}
+  .card.total{border-color:var(--accent);}
+  .card.total .value{color:var(--accent);}
+
+  table.breakdown{width:100%;border-collapse:collapse;margin-top:16px;font-family:var(--mono);font-size:12.5px;}
+  table.breakdown th{
+    text-align:left;text-transform:uppercase;font-size:11px;color:var(--muted-2);
+    padding:8px 10px;border-bottom:1px solid var(--line);letter-spacing:0.3px;
+  }
+  table.breakdown td{padding:8px 10px;border-bottom:1px solid var(--line);}
+  table.breakdown tr:last-child td{border-bottom:none;}
+  table.breakdown td.num,table.breakdown th.num{text-align:right;}
+
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
+  .filters .field{margin-bottom:0;flex:1;min-width:140px;}
+
+  .section-title{
+    font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:0.4px;
+    color:var(--muted);margin:0 0 14px;
+  }
+  .divider{height:1px;background:var(--line);margin:18px 0;}
+  .footer-note{font-size:11.5px;color:var(--muted-2);margin-top:26px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div>
+      <div class="brand"><b>PULSAR</b> / TRAC · HISTORICS MANIFEST</div>
+      <h1>Historic data create &amp; preview</h1>
+    </div>
+    <div class="conn-status">
+      <span class="dot off" id="connDot"></span>
+      <span id="connLabel">not connected</span>
+    </div>
+  </div>
+
+  <div class="gate" id="gate">
+    <div class="section-title">Bearer token</div>
+    <div class="row">
+      <div style="flex:3">
+        <input type="password" id="tokenInput" placeholder="Paste your Pulsar API bearer token" autocomplete="off">
+      </div>
+      <div style="flex:0 0 auto;display:flex;gap:8px;">
+        <button class="ghost" id="toggleTokenVis" type="button">show</button>
+        <button class="solid" id="connectBtn" type="button">Connect</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:14px;margin-bottom:0;">
+      <label>API endpoint</label>
+      <input type="text" id="endpointInput" value="/api/graphql">
+      <div class="hint">This points at the serverless function in this same project (<code>api/graphql.js</code>), which forwards to Pulsar server-side — no local proxy needed once this is deployed on Vercel. If running the tool standalone without that function (e.g. opening the HTML file directly), switch this to your local proxy's URL instead.</div>
+    </div>
+    <div class="hint">Held in memory for this tab only — nothing is saved to disk or storage, so you'll re-enter it if you reload the page.</div>
+    <div id="connMsg"></div>
+    <div id="searchListStatus" style="display:none;margin-top:10px;">
+      <div class="row" style="align-items:center;">
+        <div class="hint" id="searchListLabel" style="margin:0;"></div>
+        <div style="flex:0 0 auto;">
+          <button class="ghost" id="refreshSearchesBtn" type="button">Refresh search list</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mainArea" style="display:none;">
+
+    <div class="tabs">
+      <div class="tab active" data-tab="create">Create historic</div>
+      <div class="tab" data-tab="preview">Preview &amp; results</div>
+    </div>
+
+    <!-- CREATE TAB -->
+    <div class="tabpanel active" id="panel-create">
+      <div class="tab-toolbar"><button class="ghost" id="addCreateCardBtn" type="button">+ Add another search</button></div>
+      <div id="createCardsContainer"></div>
+    </div>
+
+    <!-- PREVIEW TAB -->
+    <div class="tabpanel" id="panel-preview">
+      <div class="tab-toolbar"><button class="ghost" id="addPreviewCardBtn" type="button">+ Add another search</button></div>
+      <div id="previewCardsContainer"></div>
+    </div>
+
+  </div>
+
+  <div class="footer-note">
+    Calls go to the "API endpoint" configured above using the token above. In this project, that's <code>/api/graphql</code> — a serverless function that forwards to <code>trac.pulsarplatform.com</code> server-side, so the browser never has to call Pulsar directly. If requests fail immediately with a generic network error, double-check the endpoint field matches how you're running this (deployed on Vercel vs. a local proxy vs. direct).
+  </div>
+
+</div>
+
+<!-- ================= TEMPLATES ================= -->
+
+<template id="createCardTemplate">
+  <div class="card-block">
+    <div class="card-block-head">
+      <span class="card-block-title"></span>
+      <button class="ghost removeCardBtn" type="button">Remove</button>
+    </div>
+
+    <div class="field">
+      <div class="searchpicker">
+        <div class="sp-row">
+          <label>Search</label>
+          <button type="button" class="ghost sp-toggle-mode">Enter ID manually</button>
+        </div>
+        <div class="sp-listmode">
+          <input type="text" class="sp-filter" placeholder="Type to search by name…" autocomplete="off">
+          <div class="sp-panel"></div>
+        </div>
+        <div class="sp-manualmode" style="display:none;">
+          <input type="text" class="sp-manualid" placeholder="Enter search ID directly" autocomplete="off">
+        </div>
+      </div>
+      <div class="hint sourceInfo"></div>
+    </div>
+
+    <div class="field">
+      <button class="ghost checkSourcesBtn" type="button">Check sources</button>
+    </div>
+
+    <div class="field">
+      <label>Date range</label>
+      <div class="daterange dateRangeRoot">
+        <button type="button" class="dr-toggle">Select dates…</button>
+        <div class="dr-panel">
+          <div class="dr-nav">
+            <button type="button" class="ghost dr-prev">‹</button>
+            <span class="dr-month-label"></span>
+            <button type="button" class="ghost dr-next">›</button>
+          </div>
+          <div class="dr-grid"></div>
+          <div class="dr-actions"><button type="button" class="ghost dr-clear">Clear</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Categories</label>
+      <div class="multiselect categoryRoot">
+        <button type="button" class="ms-toggle" disabled>Enter a search ID first</button>
+        <div class="ms-panel"></div>
+      </div>
+      <div class="hint">Only data sources actually present on this search will be selectable — checked automatically once you leave the Search ID field.</div>
+    </div>
+
+    <button class="solid createBtn" type="button">Create historic</button>
+    <div class="createMsg"></div>
+
+    <div class="createFollow" style="display:none;">
+      <div class="divider"></div>
+      <div class="section-title">Tracking your new request</div>
+      <div class="hint" style="margin-bottom:10px;">Matching by historic ID returned from the create call.</div>
+      <div class="createBoard"></div>
+    </div>
+  </div>
+</template>
+
+<template id="previewCardTemplate">
+  <div class="card-block">
+    <div class="card-block-head">
+      <span class="card-block-title"></span>
+      <button class="ghost removeCardBtn" type="button">Remove</button>
+    </div>
+
+    <div class="row">
+      <div class="field" style="flex:2">
+        <div class="searchpicker">
+          <div class="sp-row">
+            <label>Search</label>
+            <button type="button" class="ghost sp-toggle-mode">Enter ID manually</button>
+          </div>
+          <div class="sp-listmode">
+            <input type="text" class="sp-filter" placeholder="Type to search by name…" autocomplete="off">
+            <div class="sp-panel"></div>
+          </div>
+          <div class="sp-manualmode" style="display:none;">
+            <input type="text" class="sp-manualid" placeholder="Enter search ID directly" autocomplete="off">
+          </div>
+        </div>
+      </div>
+      <div class="field" style="flex:0 0 auto;align-self:end;">
+        <button class="solid fetchBtn" type="button">Fetch</button>
+      </div>
+      <div class="field" style="flex:0 0 auto;align-self:end;">
+        <button class="ghost stopPollBtn" type="button" style="display:none;">Stop polling</button>
+      </div>
+    </div>
+
+    <div class="pollStatus"></div>
+    <div class="previewMsg"></div>
+
+    <div class="filterArea" style="display:none;">
+      <div class="filters">
+        <div class="field">
+          <label>Date range</label>
+          <div class="daterange dateRangeRoot">
+            <button type="button" class="dr-toggle">Select dates…</button>
+            <div class="dr-panel">
+              <div class="dr-nav">
+                <button type="button" class="ghost dr-prev">‹</button>
+                <span class="dr-month-label"></span>
+                <button type="button" class="ghost dr-next">›</button>
+              </div>
+              <div class="dr-grid"></div>
+              <div class="dr-actions"><button type="button" class="ghost dr-clear">Clear</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Category</label>
+          <select class="f_category"><option value="">All</option></select>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <button class="ghost applyFilterBtn" type="button">Apply</button>
+        </div>
+        <div class="field" style="flex:0 0 auto;">
+          <button class="ghost clearFilterBtn" type="button">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="resultsArea"></div>
+  </div>
+</template>
+
+<script>
+// Default endpoint lives in appState.endpoint (set from the "API endpoint"
+// field), since it needs to be switchable between the local CORS proxy and
+// a direct Pulsar connection without editing code.
+
+const TERMINAL_STATUSES = ["PREVIEWED","COMPLETED"];
+const FAILED_STATUSES = ["ERROR"];
+const ARCHIVED_STATUSES = ["OLD","PRUNING"]; // no longer available, won't progress further
+// Everything else in the real enum (CREATED, INITIALIZING, INITIALIZED, VALIDATING,
+// VALIDATED, COMPILING, COMPILED, PREPARED, PREPARING, PREVIEWING, LAUNCHING,
+// LAUNCHED, STARTING, STARTED, STOPPING, STOPPED, RESUMING, COMPLETING) counts as
+// still in progress. PREVIEWING is expected right before PREVIEWED.
+function isTerminal(status){ return TERMINAL_STATUSES.includes(status); }
+function isFailed(status){ return FAILED_STATUSES.includes(status); }
+function isArchived(status){ return ARCHIVED_STATUSES.includes(status); }
+function isSettled(status){ return isTerminal(status) || isFailed(status) || isArchived(status); }
+
+const POLL_INTERVAL_MS = 4000;
+const POLL_MAX_TICKS = 90; // ~6 minutes
+
+// Human label -> API code. Includes SEA_FACEBOOK_PAGES and SERMO from the
+// original full category list even though they weren't in the latest label
+// set, using their original enum descriptions, so the picker stays complete.
+const CATEGORY_LABELS = {
+  ALIEXPRESS: "AliExpress", AMAZON: "Amazon", BAIDU: "Baidu", BLOGS: "Blogs",
+  DARK_WEB: "Dark Web", EXPEDIA: "Expedia", FACEBOOK: "Facebook", FORUMS: "Forums",
+  INSTAGRAM_PUBLIC: "Instagram", LINKEDIN: "LinkedIn", NAVER: "Naver",
+  ONLINE_NEWS: "Online News", PINTEREST: "Pinterest", PODCAST: "Podcast",
+  PRINT_NEWS: "Print News", RADIO: "Radio", REDDIT: "Reddit", REVIEWS: "Reviews",
+  SEA_FACEBOOK_PAGES: "SEA Facebook Pages", SERMO: "Sermo", TAOBAO: "TaoBao",
+  THREADS: "Threads", TIKTOK: "TikTok", TRIPADVISOR: "Trip Advisor",
+  TRUSTPILOT: "Trust Pilot", TUMBLR: "Tumblr", TV: "TV", TWITCH: "Twitch",
+  X: "X", VK: "VK", YOUTUBE: "YouTube"
+};
+function categoryLabel(code){ return CATEGORY_LABELS[code] || code; }
+
+let appState = { token: null, endpoint: "/api/graphql", searches: [] };
+
+// ---------- GraphQL helper ----------
+async function gql(query, variables){
+  let res;
+  try{
+    res = await fetch(appState.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + appState.token
+      },
+      body: JSON.stringify({ query, variables })
+    });
+  }catch(err){
+    throw new Error(`Network/CORS error calling ${appState.endpoint} — the request never reached it. If this is the direct Pulsar URL, it's almost certainly missing CORS headers and needs the local proxy instead. If this is already the proxy URL, make sure pulsar-proxy.js is running.`);
+  }
+  let json;
+  try{
+    json = await res.json();
+  }catch(err){
+    throw new Error("Got a response but couldn't parse it as JSON (HTTP " + res.status + ").");
+  }
+  if(!res.ok){
+    throw new Error("HTTP " + res.status + ": " + (json?.errors?.[0]?.message || res.statusText));
+  }
+  if(json.errors && json.errors.length){
+    throw new Error(json.errors.map(e=>e.message).join("; "));
+  }
+  return json.data;
+}
+
+const SEARCHES_QUERY = `
+query Searches($ids: [ID!]){
+  searches(ids: $ids){
+    totalCount
+    nodes{
+      name
+      totalContents
+      startDate
+      status
+      searchHash
+      realtimeStatus
+      categories
+    }
+  }
+}`;
+
+// Lists every search in the domain (name + id), used to populate the search
+// picker. Paginates via `after`/endCursor — this query's pageInfo has no
+// hasNextPage, so we stop once a page comes back empty or we've reached
+// totalCount, with a guard against a runaway loop either way.
+const ALL_SEARCHES_QUERY = `
+query Searches($sortBy: AllowedFieldsForSorting, $status: [SearchStatusEnum!], $realtimeStatus: [SearchRealtimeStatusEnum!], $after: String, $orderDirection: OrderDirection){
+  searches(sortBy: $sortBy, status: $status, realtimeStatus: $realtimeStatus, after: $after, orderDirection: $orderDirection){
+    totalCount
+    pageInfo{ endCursor }
+    nodes{
+      name
+      totalContents
+      startDate
+      status
+      searchHash
+      id
+    }
+  }
+}`;
+
+async function fetchAllSearches(){
+  let after = null;
+  let all = [];
+  let totalCount = null;
+  let guard = 0;
+  while(true){
+    guard++;
+    const data = await gql(ALL_SEARCHES_QUERY, {
+      sortBy: "CREATED_AT",
+      status: ["READY","PREPARED"],
+      orderDirection: "DESC",
+      after
+    });
+    const result = data?.searches;
+    totalCount = result?.totalCount ?? totalCount;
+    const nodes = result?.nodes || [];
+    all = all.concat(nodes);
+    if(!nodes.length) break;
+    if(totalCount != null && all.length >= totalCount) break;
+    const nextAfter = result?.pageInfo?.endCursor;
+    if(!nextAfter || nextAfter === after) break;
+    after = nextAfter;
+    if(guard > 200){
+      throw new Error("Stopped after 200 pages fetching the searches list — check the pagination logic.");
+    }
+  }
+  return all;
+}
+
+const CREATE_MUTATION = `
+mutation CreateHistoric($input: CreateHistoricInput!){
+  createHistoric(input: $input){
+    errors { id message extensions }
+    historics { id }
+  }
+}`;
+
+const PREVIEW_QUERY = `
+query PreviewHistorics($sid: ID, $cursor: String){
+  historics(searchId: $sid, after: $cursor){
+    totalCount
+    pageInfo{ endCursor hasNextPage startCursor }
+    nodes{
+      id
+      startDate
+      endDate
+      category
+      status
+      progress
+      previewResult
+    }
+  }
+}`;
+
+// Pages through every historic for a search, following the cursor until
+// hasNextPage is false. Returns { nodes, totalCount }.
+async function fetchAllHistorics(searchId, onPageLoaded){
+  let cursor = null;
+  let all = [];
+  let totalCount = null;
+  let guard = 0;
+  while(true){
+    guard++;
+    const data = await gql(PREVIEW_QUERY, { sid: searchId, cursor });
+    const result = data?.historics;
+    totalCount = result?.totalCount ?? totalCount;
+    const nodes = result?.nodes || [];
+    all = all.concat(nodes);
+    if(onPageLoaded) onPageLoaded(all.length, totalCount);
+    const pageInfo = result?.pageInfo;
+    if(!pageInfo || !pageInfo.hasNextPage || !pageInfo.endCursor){
+      break;
+    }
+    cursor = pageInfo.endCursor;
+    if(guard > 200){
+      throw new Error("Stopped after 200 pages — pagination may be looping. Check the endCursor logic.");
+    }
+  }
+  return { nodes: all, totalCount };
+}
+
+// ---------- date helpers ----------
+function toStartISO(dateStr){ return dateStr + "T00:00:00Z"; }
+function toEndISO(dateStr){ return dateStr + "T23:59:59Z"; }
+function fmtDate(iso){ return iso ? iso.slice(0,10) : "—"; }
+
+// ---------- Connect ----------
+const gateEl = document.getElementById("gate");
+const tokenInput = document.getElementById("tokenInput");
+document.getElementById("toggleTokenVis").addEventListener("click", ()=>{
+  tokenInput.type = tokenInput.type === "password" ? "text" : "password";
+});
+document.getElementById("connectBtn").addEventListener("click", async ()=>{
+  const t = tokenInput.value.trim();
+  const msgEl = document.getElementById("connMsg");
+  if(!t){
+    msgEl.innerHTML = `<div class="msg error">Enter a token first.</div>`;
+    return;
+  }
+  appState.token = t;
+  const endpointVal = document.getElementById("endpointInput").value.trim();
+  if(endpointVal) appState.endpoint = endpointVal;
+  document.getElementById("connDot").className = "dot on";
+  document.getElementById("connLabel").textContent = "connected";
+  gateEl.classList.add("connected");
+  msgEl.innerHTML = `<div class="msg ok">Token stored for this session. Calling ${appState.endpoint}</div>`;
+  document.getElementById("mainArea").style.display = "block";
+  await loadSearchesList();
+});
+
+document.getElementById("refreshSearchesBtn").addEventListener("click", loadSearchesList);
+
+async function loadSearchesList(){
+  const statusBlock = document.getElementById("searchListStatus");
+  const label = document.getElementById("searchListLabel");
+  statusBlock.style.display = "block";
+  label.textContent = "Loading your searches…";
+  try{
+    const searches = await fetchAllSearches();
+    appState.searches = searches;
+    label.textContent = `${searches.length} search${searches.length===1?"":"es"} loaded. If a new one doesn't show up yet, use Refresh.`;
+  }catch(err){
+    label.innerHTML = `<span style="color:var(--error)">Couldn't load the searches list: ${err.message}. You can still enter a search ID manually on any card.</span>`;
+  }
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach(tab=>{
+  tab.addEventListener("click", ()=>{
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".tabpanel").forEach(p=>p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+  });
+});
+
+// ---------- Reusable calendar date-range picker ----------
+// Takes a root DOM element (not an ID) so it works for repeated cards.
+// No external dependencies — click a start day, click an end day.
+function createDateRangePicker(root, opts){
+  opts = opts || {};
+  const toggle = root.querySelector(".dr-toggle");
+  const panel = root.querySelector(".dr-panel");
+  const monthLabel = root.querySelector(".dr-month-label");
+  const grid = root.querySelector(".dr-grid");
+  const prevBtn = root.querySelector(".dr-prev");
+  const nextBtn = root.querySelector(".dr-next");
+  const clearBtn = root.querySelector(".dr-clear");
+
+  const today = new Date();
+  let viewYear = today.getFullYear();
+  let viewMonth = today.getMonth();
+  let start = null, end = null;
+
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function toISO(y,m,d){ return `${y}-${pad(m+1)}-${pad(d)}`; }
+  function fmtShort(iso){ if(!iso) return null; const [y,m,d] = iso.split("-"); return `${d}/${m}/${y}`; }
+
+  function updateToggleLabel(){
+    if(start && end) toggle.textContent = `${fmtShort(start)} → ${fmtShort(end)}`;
+    else if(start) toggle.textContent = `${fmtShort(start)} → …`;
+    else toggle.textContent = "Select dates…";
+  }
+
+  function renderGrid(){
+    monthLabel.textContent = new Date(viewYear, viewMonth, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+    grid.innerHTML = "";
+    ["S","M","T","W","T","F","S"].forEach(l=>{
+      const el = document.createElement("div");
+      el.className = "dr-dow"; el.textContent = l;
+      grid.appendChild(el);
+    });
+    const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    for(let i=0; i<firstDow; i++){
+      const el = document.createElement("div");
+      el.className = "dr-cell dr-empty";
+      grid.appendChild(el);
+    }
+    for(let d=1; d<=daysInMonth; d++){
+      const iso = toISO(viewYear, viewMonth, d);
+      const el = document.createElement("div");
+      el.className = "dr-cell dr-day";
+      el.textContent = d;
+      if(start && iso === start) el.classList.add("dr-start");
+      if(end && iso === end) el.classList.add("dr-end");
+      if(start && end && iso > start && iso < end) el.classList.add("dr-inrange");
+      el.addEventListener("click", ()=> selectDate(iso));
+      grid.appendChild(el);
+    }
+  }
+
+  function selectDate(iso){
+    if(!start || (start && end)){
+      start = iso; end = null;
+    } else if(iso < start){
+      end = start; start = iso;
+    } else {
+      end = iso;
+    }
+    renderGrid();
+    updateToggleLabel();
+    if(start && end){
+      panel.classList.remove("open");
+      if(opts.onChange) opts.onChange(start, end);
+    }
+  }
+
+  prevBtn.addEventListener("click", (e)=>{ e.stopPropagation(); viewMonth--; if(viewMonth < 0){ viewMonth = 11; viewYear--; } renderGrid(); });
+  nextBtn.addEventListener("click", (e)=>{ e.stopPropagation(); viewMonth++; if(viewMonth > 11){ viewMonth = 0; viewYear++; } renderGrid(); });
+  clearBtn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    start = null; end = null;
+    renderGrid(); updateToggleLabel();
+    if(opts.onChange) opts.onChange(null, null);
+  });
+  toggle.addEventListener("click", (e)=>{ e.stopPropagation(); panel.classList.toggle("open"); });
+  document.addEventListener("click", (e)=>{ if(!root.contains(e.target)) panel.classList.remove("open"); });
+
+  renderGrid();
+  updateToggleLabel();
+
+  return {
+    getRange: ()=> ({ start, end }),
+    setRange: (s,e)=>{ start = s; end = e; renderGrid(); updateToggleLabel(); }
+  };
+}
+
+// ---------- Reusable search-name picker ----------
+// Lets you type to filter appState.searches by name and click to select, with
+// a fallback toggle to type a raw search ID if a search isn't in the list.
+function createSearchPicker(root){
+  const toggleModeBtn = root.querySelector(".sp-toggle-mode");
+  const listMode = root.querySelector(".sp-listmode");
+  const manualMode = root.querySelector(".sp-manualmode");
+  const filterInput = root.querySelector(".sp-filter");
+  const panel = root.querySelector(".sp-panel");
+  const manualInput = root.querySelector(".sp-manualid");
+
+  let manual = false;
+  let selectedId = null;
+  let selectedName = null;
+
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+  function renderPanel(query){
+    const q = (query || "").toLowerCase();
+    const list = appState.searches || [];
+    const matches = list.filter(s => (s.name || "").toLowerCase().includes(q)).slice(0, 50);
+    if(!list.length){
+      panel.innerHTML = `<div class="sp-empty">No searches loaded yet — connect first, or use "Enter ID manually".</div>`;
+      return;
+    }
+    if(!matches.length){
+      panel.innerHTML = `<div class="sp-empty">No matches for "${esc(query)}".</div>`;
+      return;
+    }
+    panel.innerHTML = matches.map(s => `
+      <div class="sp-item" data-id="${s.id}" data-name="${esc(s.name || "")}">
+        <div class="sp-item-name">${esc(s.name || "(untitled)")}</div>
+        <div class="sp-item-meta">ID ${s.id} · ${s.status || "—"}</div>
+      </div>
+    `).join("");
+    panel.querySelectorAll(".sp-item").forEach(item=>{
+      item.addEventListener("click", ()=>{
+        selectedId = item.dataset.id;
+        selectedName = item.dataset.name;
+        filterInput.value = selectedName;
+        panel.classList.remove("open");
+      });
+    });
+  }
+
+  filterInput.addEventListener("focus", ()=>{ renderPanel(filterInput.value); panel.classList.add("open"); });
+  filterInput.addEventListener("input", ()=>{
+    selectedId = null; // typing invalidates the previous exact pick until re-selected
+    renderPanel(filterInput.value);
+    panel.classList.add("open");
+  });
+  document.addEventListener("click", (e)=>{ if(!root.contains(e.target)) panel.classList.remove("open"); });
+
+  toggleModeBtn.addEventListener("click", ()=>{
+    manual = !manual;
+    listMode.style.display = manual ? "none" : "block";
+    manualMode.style.display = manual ? "block" : "none";
+    toggleModeBtn.textContent = manual ? "Choose from list" : "Enter ID manually";
+  });
+
+  return {
+    getSearchId(){
+      if(manual) return manualInput.value.trim() || null;
+      return selectedId;
+    }
+  };
+}
+
+// ---------- Shared results renderer ----------
+// Takes a DOM element directly (not an ID) so it works for repeated cards.
+function renderResults(area, nodes){
+  if(!nodes.length){
+    area.innerHTML = `<div class="msg info">No rows yet.</div>`;
+    return;
+  }
+
+  const groups = {};
+  nodes.forEach(n=>{
+    (groups[n.category] = groups[n.category] || []).push(n);
+  });
+
+  let totalDone = 0;
+  let anyPending = false;
+  const erroredCats = [];
+  const archivedCats = [];
+
+  const rows = Object.entries(groups).map(([cat, rs])=>{
+    const doneRows = rs.filter(r => isTerminal(r.status));
+    const failedRows = rs.filter(r => isFailed(r.status));
+    const archivedRows = rs.filter(r => isArchived(r.status));
+    const pendingRows = rs.filter(r => !isSettled(r.status));
+    const sum = doneRows.reduce((s,r)=> s + (Number(r.previewResult) || 0), 0);
+    totalDone += sum;
+
+    let statusLabel, statusClass;
+    if(failedRows.length){
+      statusLabel = "ERROR";
+      statusClass = "st-error";
+      erroredCats.push(cat);
+    } else if(archivedRows.length && !pendingRows.length){
+      statusLabel = archivedRows[0].status;
+      statusClass = "st-archived";
+      archivedCats.push(cat);
+    } else if(pendingRows.length){
+      anyPending = true;
+      const p = pendingRows[0];
+      statusLabel = p.status + (p.progress != null ? ` · ${p.progress.toFixed(0)}%` : "");
+      statusClass = "st-progress";
+    } else if(doneRows.length){
+      statusLabel = "PREVIEWED";
+      statusClass = "st-success";
+    } else {
+      statusLabel = "—";
+      statusClass = "st-progress";
+    }
+
+    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0 };
+  });
+
+  rows.sort((a,b)=> b.sum - a.sum);
+
+  let html = "";
+
+  if(erroredCats.length || archivedCats.length){
+    html += `<div class="msg error"><b>Check before relying on these numbers:</b> `;
+    const parts = [];
+    if(erroredCats.length) parts.push(`${erroredCats.map(categoryLabel).join(", ")} returned status ERROR — most likely that data source isn't present on this search, or the request was otherwise invalid.`);
+    if(archivedCats.length) parts.push(`${archivedCats.map(categoryLabel).join(", ")} came back as OLD/PRUNING — this historic is no longer available and won't produce a result.`);
+    html += parts.join(" ") + `</div>`;
+  }
+
+  if(anyPending){
+    const waitingOn = rows.filter(r => r.statusClass === "st-progress").map(r => `${categoryLabel(r.cat)} (${r.statusLabel})`).join(", ");
+    html += `<div class="msg info">Still previewing: ${waitingOn || "…"}. The numbers below update automatically as each source finishes — nothing here needs a refresh.</div>`;
+  }
+
+  html += `
+    <div class="summary">
+      <div class="card total">
+        <div class="label">${anyPending ? "Total (previewed so far)" : "Total (all sources)"}</div>
+        <div class="value">${totalDone.toLocaleString()}</div>
+      </div>
+      <div class="card">
+        <div class="label">Data sources</div>
+        <div class="value">${rows.length}</div>
+      </div>
+      <div class="card">
+        <div class="label">Sources done</div>
+        <div class="value" style="font-size:15px;">${rows.filter(r=>r.statusClass==="st-success").length} / ${rows.length}</div>
+      </div>
+    </div>
+    <table class="breakdown">
+      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Status</th></tr></thead>
+      <tbody>`;
+  rows.forEach(r=>{
+    const pct = (totalDone && r.hasValue) ? (r.sum / totalDone * 100) : null;
+    html += `<tr>
+      <td>${categoryLabel(r.cat)}</td>
+      <td class="num">${r.hasValue ? r.sum.toLocaleString() : "—"}</td>
+      <td class="num">${pct != null ? pct.toFixed(1) + "%" : "—"}</td>
+      <td><span class="badge ${r.statusClass}">${r.statusLabel}</span></td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  if(anyPending){
+    html += `<div class="hint">* percentages are of the total previewed so far, and will shift as the remaining sources complete.</div>`;
+  }
+  area.innerHTML = html;
+}
+
+// ================= CREATE CARDS =================
+let createCardCounter = 0;
+
+function addCreateCard(){
+  createCardCounter++;
+  const frag = document.getElementById("createCardTemplate").content.cloneNode(true);
+  const root = frag.querySelector(".card-block");
+  root.querySelector(".card-block-title").textContent = `Search #${createCardCounter}`;
+  document.getElementById("createCardsContainer").appendChild(frag);
+  wireCreateCard(root);
+}
+
+function wireCreateCard(root){
+  const searchPicker = createSearchPicker(root.querySelector(".searchpicker"));
+  const sourceInfo = root.querySelector(".sourceInfo");
+  const checkSourcesBtn = root.querySelector(".checkSourcesBtn");
+  const categoryRoot = root.querySelector(".categoryRoot");
+  const categoryToggle = categoryRoot.querySelector(".ms-toggle");
+  const categoryPanel = categoryRoot.querySelector(".ms-panel");
+  const dateRangeRoot = root.querySelector(".dateRangeRoot");
+  const createBtn = root.querySelector(".createBtn");
+  const createMsg = root.querySelector(".createMsg");
+  const createFollow = root.querySelector(".createFollow");
+  const createBoard = root.querySelector(".createBoard");
+  const removeCardBtn = root.querySelector(".removeCardBtn");
+
+  let availableCategories = null; // null = not checked yet
+  let selectedCategories = new Set();
+  const dateRangePicker = createDateRangePicker(dateRangeRoot);
+  let cardPollTimer = null;
+
+  function updateCategoryToggleLabel(){
+    const codes = Array.from(selectedCategories);
+    if(codes.length === 0) categoryToggle.textContent = "Select categories…";
+    else if(codes.length <= 3) categoryToggle.textContent = codes.map(categoryLabel).join(", ");
+    else categoryToggle.textContent = `${codes.length} categories selected`;
+  }
+
+  function setCategoryOptions(codes){
+    availableCategories = codes;
+    selectedCategories = new Set();
+    categoryPanel.innerHTML = "";
+    if(!codes){
+      categoryToggle.disabled = true;
+      categoryToggle.textContent = "Enter a search ID first";
+      return;
+    }
+    if(!codes.length){
+      categoryToggle.disabled = true;
+      categoryToggle.textContent = "No sources found on this search";
+      return;
+    }
+    categoryToggle.disabled = false;
+    updateCategoryToggleLabel();
+    const sorted = codes.slice().sort((a,b)=> categoryLabel(a).localeCompare(categoryLabel(b)));
+    categoryPanel.innerHTML = sorted.map(code => `
+      <label class="ms-item">
+        <input type="checkbox" value="${code}">
+        <span>${categoryLabel(code)}</span>
+      </label>
+    `).join("");
+    categoryPanel.querySelectorAll("input[type=checkbox]").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        if(cb.checked) selectedCategories.add(cb.value);
+        else selectedCategories.delete(cb.value);
+        updateCategoryToggleLabel();
+      });
+    });
+  }
+  setCategoryOptions(null);
+
+  categoryToggle.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    if(!categoryToggle.disabled) categoryPanel.classList.toggle("open");
+  });
+  document.addEventListener("click", (e)=>{
+    if(!categoryRoot.contains(e.target)) categoryPanel.classList.remove("open");
+  });
+
+  async function checkSources(){
+    const searchId = searchPicker.getSearchId();
+    if(!searchId){
+      sourceInfo.innerHTML = `<span style="color:var(--error)">Choose a search from the list, or enter an ID manually, first.</span>`;
+      setCategoryOptions(null);
+      return;
+    }
+    if(isNaN(Number(searchId))){
+      sourceInfo.innerHTML = `<span style="color:var(--error)">Search ID should be numeric.</span>`;
+      setCategoryOptions(null);
+      return;
+    }
+    sourceInfo.textContent = "Checking data sources on this search…";
+    categoryToggle.disabled = true;
+    categoryToggle.textContent = "Checking…";
+    try{
+      const data = await gql(SEARCHES_QUERY, { ids: [searchId] });
+      const node = data?.searches?.nodes?.[0];
+      if(!node){
+        sourceInfo.innerHTML = `<span style="color:var(--error)">No search found with ID ${searchId}.</span>`;
+        setCategoryOptions(null);
+        return;
+      }
+      const cats = node.categories || [];
+      sourceInfo.innerHTML = `<b>${node.name || "Untitled search"}</b> · status: ${node.status || "—"} · ${cats.length} source${cats.length===1?"":"s"} available`;
+      setCategoryOptions(cats);
+    }catch(err){
+      sourceInfo.innerHTML = `<span style="color:var(--error)">${err.message}</span>`;
+      setCategoryOptions(null);
+    }
+  }
+
+  checkSourcesBtn.addEventListener("click", checkSources);
+
+  createBtn.addEventListener("click", async ()=>{
+    const searchId = searchPicker.getSearchId();
+    const { start, end } = dateRangePicker.getRange();
+    const categories = Array.from(selectedCategories);
+
+    if(!searchId || !start || !end || categories.length === 0){
+      createMsg.innerHTML = `<div class="msg error">A search, a date range and at least one category are all required.</div>`;
+      return;
+    }
+    if(isNaN(Number(searchId))){
+      createMsg.innerHTML = `<div class="msg error">Search ID should be numeric — got "${searchId}".</div>`;
+      return;
+    }
+    if(!availableCategories){
+      createMsg.innerHTML = `<div class="msg error">Click "Check sources" first so I can confirm which categories are available.</div>`;
+      return;
+    }
+
+    const startISO = toStartISO(start);
+    const endISO = toEndISO(end);
+
+    createBtn.disabled = true;
+    createMsg.innerHTML = `<div class="msg info">Submitting create request…</div>`;
+
+    try{
+      const data = await gql(CREATE_MUTATION, {
+        input: {
+          searchId: Number(searchId),
+          categories,
+          startDate: startISO,
+          endDate: endISO
+        }
+      });
+      const errs = data?.createHistoric?.errors || [];
+      if(errs.length){
+        createMsg.innerHTML = `<div class="msg error">API returned errors:<br>` +
+          errs.map(e=>`— [${e.id}] ${e.message}`).join("<br>") + `</div>`;
+      } else {
+        const createdIds = (data?.createHistoric?.historics || []).map(h => h.id);
+        createMsg.innerHTML = `<div class="msg ok">Create request accepted for ${categories.map(categoryLabel).join(", ")} — ${createdIds.length} historic ID${createdIds.length===1?"":"s"} returned. Tracking status below.</div>`;
+        createFollow.style.display = "block";
+        if(cardPollTimer) clearTimeout(cardPollTimer);
+        cardPollTimer = trackNewHistorics(createBoard, Number(searchId), categories, startISO, endISO, createdIds);
+      }
+    }catch(err){
+      createMsg.innerHTML = `<div class="msg error">${err.message}</div>`;
+    }finally{
+      createBtn.disabled = false;
+    }
+  });
+
+  removeCardBtn.addEventListener("click", ()=>{
+    root.remove();
+  });
+}
+
+function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, createdIds){
+  let ticks = 0;
+  let timerHandle = null;
+  boardEl.innerHTML = `<div class="msg info">Polling for status…</div>`;
+
+  async function tick(){
+    ticks++;
+    let all;
+    try{
+      const paged = await fetchAllHistorics(searchId, (loaded,total)=>{
+        boardEl.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
+      });
+      all = paged.nodes;
+    }catch(err){
+      boardEl.innerHTML = `<div class="msg error">${err.message}</div>`;
+      return;
+    }
+
+    let matched;
+    if(createdIds && createdIds.length){
+      matched = all.filter(n => createdIds.includes(n.id));
+    } else {
+      matched = all.filter(n =>
+        categories.includes(n.category) &&
+        n.startDate === startISO &&
+        n.endDate === endISO
+      );
+    }
+    renderResults(boardEl, matched);
+
+    const allDone = matched.length === categories.length && matched.every(n => isSettled(n.status));
+
+    if(allDone){
+      const failed = matched.filter(n=>isFailed(n.status));
+      const note = document.createElement("div");
+      if(failed.length){
+        note.className = "msg error";
+        note.textContent = `${failed.length} of ${matched.length} categories returned ERROR (see banner above) — usually means that data source isn't present on this search. The other ${matched.length - failed.length} are ready.`;
+      }else{
+        note.className = "msg ok";
+        note.textContent = `All ${matched.length} categories previewed.`;
+      }
+      boardEl.appendChild(note);
+      return;
+    }
+
+    if(ticks >= POLL_MAX_TICKS){
+      const note = document.createElement("div");
+      note.className = "msg error";
+      note.textContent = "Stopped polling after ~6 minutes without every category completing. Check the preview tab manually.";
+      boardEl.appendChild(note);
+      return;
+    }
+    timerHandle = setTimeout(tick, POLL_INTERVAL_MS);
+  }
+  tick();
+  return timerHandle;
+}
+
+// ================= PREVIEW CARDS =================
+let previewCardCounter = 0;
+
+function addPreviewCard(){
+  previewCardCounter++;
+  const frag = document.getElementById("previewCardTemplate").content.cloneNode(true);
+  const root = frag.querySelector(".card-block");
+  root.querySelector(".card-block-title").textContent = `Search #${previewCardCounter}`;
+  document.getElementById("previewCardsContainer").appendChild(frag);
+  wirePreviewCard(root);
+}
+
+function wirePreviewCard(root){
+  const searchPicker = createSearchPicker(root.querySelector(".searchpicker"));
+  const fetchBtn = root.querySelector(".fetchBtn");
+  const stopPollBtn = root.querySelector(".stopPollBtn");
+  const pollStatusEl = root.querySelector(".pollStatus");
+  const previewMsgEl = root.querySelector(".previewMsg");
+  const filterArea = root.querySelector(".filterArea");
+  const dateRangeRoot = root.querySelector(".dateRangeRoot");
+  const categorySelect = root.querySelector(".f_category");
+  const applyFilterBtn = root.querySelector(".applyFilterBtn");
+  const clearFilterBtn = root.querySelector(".clearFilterBtn");
+  const resultsAreaEl = root.querySelector(".resultsArea");
+  const removeCardBtn = root.querySelector(".removeCardBtn");
+
+  let pollTimer = null;
+  let pollTicks = 0;
+  let currentPreviewNodes = [];
+  let currentSearchId = null;
+
+  function refreshResultsView(){
+    const filtered = hasActiveFilter() ? getFilteredNodes() : currentPreviewNodes;
+    renderResults(resultsAreaEl, filtered);
+  }
+
+  const dateRangePicker = createDateRangePicker(dateRangeRoot, { onChange: refreshResultsView });
+
+  function hasActiveFilter(){
+    const { start, end } = dateRangePicker.getRange();
+    return !!(start || end || categorySelect.value);
+  }
+
+  function getFilteredNodes(){
+    const { start: fs, end: fe } = dateRangePicker.getRange();
+    const fc = categorySelect.value;
+    return currentPreviewNodes.filter(n=>{
+      if(fc && n.category !== fc) return false;
+      if(fs && n.startDate.slice(0,10) < fs) return false;
+      if(fe && n.endDate.slice(0,10) > fe) return false;
+      return true;
+    });
+  }
+
+  function setupFilterOptions(nodes){
+    filterArea.style.display = "block";
+    const previousValue = categorySelect.value;
+    const cats = Array.from(new Set(nodes.map(n=>n.category))).sort((a,b)=> categoryLabel(a).localeCompare(categoryLabel(b)));
+    categorySelect.innerHTML = `<option value="">All</option>` + cats.map(c=>`<option value="${c}">${categoryLabel(c)}</option>`).join("");
+    if(cats.includes(previousValue)) categorySelect.value = previousValue;
+  }
+
+  categorySelect.addEventListener("change", refreshResultsView);
+  applyFilterBtn.addEventListener("click", refreshResultsView);
+  clearFilterBtn.addEventListener("click", ()=>{
+    dateRangePicker.setRange(null, null);
+    categorySelect.value = "";
+    refreshResultsView();
+  });
+
+  function stopPolling(){
+    if(pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    stopPollBtn.style.display = "none";
+  }
+  stopPollBtn.addEventListener("click", stopPolling);
+
+  async function pollPreview(){
+    pollTicks++;
+    let nodes, totalCount;
+    try{
+      pollStatusEl.innerHTML = `<div class="msg info">Paging through historics…</div>`;
+      const paged = await fetchAllHistorics(currentSearchId, (loaded,total)=>{
+        pollStatusEl.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
+      });
+      nodes = paged.nodes;
+      totalCount = paged.totalCount;
+    }catch(err){
+      previewMsgEl.innerHTML = `<div class="msg error">${err.message}</div>`;
+      stopPolling();
+      return;
+    }
+
+    currentPreviewNodes = nodes;
+
+    if(totalCount != null && totalCount > nodes.length){
+      previewMsgEl.innerHTML = `<div class="msg error">Heads up: the API reports ${totalCount} total historics but pagination only returned ${nodes.length} — hasNextPage may have stopped early. Numbers below only reflect what was returned.</div>`;
+    } else {
+      previewMsgEl.innerHTML = "";
+    }
+
+    setupFilterOptions(nodes);
+    refreshResultsView();
+
+    const pending = nodes.filter(n => !isSettled(n.status));
+
+    if(pending.length){
+      pollStatusEl.innerHTML = `<div class="msg info">${nodes.length - pending.length} of ${nodes.length} sources settled (poll ${pollTicks}) — checking again every ${POLL_INTERVAL_MS/1000}s.</div>`;
+      if(pollTicks >= POLL_MAX_TICKS){
+        pollStatusEl.innerHTML = `<div class="msg error">Stopped after ~6 minutes with sources still pending. Hit Fetch again to resume.</div>`;
+        stopPolling();
+        return;
+      }
+      pollTimer = setTimeout(pollPreview, POLL_INTERVAL_MS);
+    } else {
+      stopPolling();
+      const errored = nodes.filter(n=>isFailed(n.status)).length;
+      pollStatusEl.innerHTML = errored
+        ? `<div class="msg error">All ${nodes.length} sources settled — ${errored} came back ERROR (see banner above).</div>`
+        : `<div class="msg ok">All ${nodes.length} sources previewed.</div>`;
+    }
+  }
+
+  fetchBtn.addEventListener("click", ()=>{
+    const searchId = searchPicker.getSearchId();
+    if(!searchId){
+      previewMsgEl.innerHTML = `<div class="msg error">Choose a search from the list, or enter an ID manually.</div>`;
+      return;
+    }
+    if(isNaN(Number(searchId))){
+      previewMsgEl.innerHTML = `<div class="msg error">Search ID should be numeric — got "${searchId}".</div>`;
+      return;
+    }
+    stopPolling();
+    currentSearchId = Number(searchId);
+    pollTicks = 0;
+    stopPollBtn.style.display = "inline-block";
+    pollPreview();
+  });
+
+  removeCardBtn.addEventListener("click", ()=>{
+    stopPolling();
+    root.remove();
+  });
+}
+
+// ---------- init ----------
+document.getElementById("addCreateCardBtn").addEventListener("click", addCreateCard);
+document.getElementById("addPreviewCardBtn").addEventListener("click", addPreviewCard);
+addCreateCard();
+addPreviewCard();
+</script>
+</body>
+</html>
