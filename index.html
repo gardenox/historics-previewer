@@ -422,7 +422,10 @@
 
     <div class="createFollow" style="display:none;">
       <div class="divider"></div>
-      <div class="section-title">Tracking your new request</div>
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Tracking your new request</span>
+        <button class="ghost stopTrackingBtn" type="button" style="font-size:11px;padding:4px 10px;">Stop watching</button>
+      </div>
       <div class="hint" style="margin-bottom:10px;">Matching by historic ID returned from the create call.</div>
       <div class="createBoard"></div>
     </div>
@@ -535,7 +538,6 @@ function isArchived(status){ return ARCHIVED_STATUSES.includes(status); }
 function isSettled(status){ return isTerminal(status) || isFailed(status) || isArchived(status); }
 
 const POLL_INTERVAL_MS = 4000;
-const POLL_MAX_TICKS = 90; // ~6 minutes
 
 // Human label -> API code. Includes SEA_FACEBOOK_PAGES and SERMO from the
 // original full category list even though they weren't in the latest label
@@ -947,6 +949,9 @@ function renderResults(area, nodes){
     const sum = doneRows.reduce((s,r)=> s + (Number(r.previewResult) || 0), 0);
     totalDone += sum;
 
+    const minStart = rs.reduce((m,r)=> (!m || r.startDate < m) ? r.startDate : m, null);
+    const maxEnd = rs.reduce((m,r)=> (!m || r.endDate > m) ? r.endDate : m, null);
+
     let statusLabel, statusClass;
     if(failedRows.length){
       statusLabel = "ERROR";
@@ -969,7 +974,7 @@ function renderResults(area, nodes){
       statusClass = "st-progress";
     }
 
-    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0 };
+    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0, minStart, maxEnd };
   });
 
   rows.sort((a,b)=> b.sum - a.sum);
@@ -989,6 +994,10 @@ function renderResults(area, nodes){
     html += `<div class="msg info">Still previewing: ${waitingOn || "…"}. The numbers below update automatically as each source finishes — nothing here needs a refresh.</div>`;
   }
 
+  const overallStart = rows.reduce((m,r)=> (r.minStart && (!m || r.minStart < m)) ? r.minStart : m, null);
+  const overallEnd = rows.reduce((m,r)=> (r.maxEnd && (!m || r.maxEnd > m)) ? r.maxEnd : m, null);
+  const sameWindowThroughout = rows.every(r => r.minStart === overallStart && r.maxEnd === overallEnd);
+
   html += `
     <div class="summary">
       <div class="card total">
@@ -1003,9 +1012,13 @@ function renderResults(area, nodes){
         <div class="label">Sources done</div>
         <div class="value" style="font-size:15px;">${rows.filter(r=>r.statusClass==="st-success").length} / ${rows.length}</div>
       </div>
+      <div class="card">
+        <div class="label">Date range</div>
+        <div class="value" style="font-size:15px;">${fmtDate(overallStart)} → ${fmtDate(overallEnd)}${sameWindowThroughout ? "" : " *"}</div>
+      </div>
     </div>
     <table class="breakdown">
-      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Status</th></tr></thead>
+      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Window</th><th>Status</th></tr></thead>
       <tbody>`;
   rows.forEach(r=>{
     const pct = (totalDone && r.hasValue) ? (r.sum / totalDone * 100) : null;
@@ -1013,12 +1026,16 @@ function renderResults(area, nodes){
       <td>${categoryLabel(r.cat)}</td>
       <td class="num">${r.hasValue ? r.sum.toLocaleString() : "—"}</td>
       <td class="num">${pct != null ? pct.toFixed(1) + "%" : "—"}</td>
+      <td>${fmtDate(r.minStart)} → ${fmtDate(r.maxEnd)}</td>
       <td><span class="badge ${r.statusClass}">${r.statusLabel}</span></td>
     </tr>`;
   });
   html += `</tbody></table>`;
   if(anyPending){
     html += `<div class="hint">* percentages are of the total previewed so far, and will shift as the remaining sources complete.</div>`;
+  }
+  if(!sameWindowThroughout){
+    html += `<div class="hint">* the top date range spans the earliest start to the latest end across all rows — categories don't all share the same window here, so check the per-row Window column for the exact range on each.</div>`;
   }
   area.innerHTML = html;
 }
@@ -1047,6 +1064,7 @@ function wireCreateCard(root){
   const createMsg = root.querySelector(".createMsg");
   const createFollow = root.querySelector(".createFollow");
   const createBoard = root.querySelector(".createBoard");
+  const stopTrackingBtn = root.querySelector(".stopTrackingBtn");
   const removeCardBtn = root.querySelector(".removeCardBtn");
 
   let availableCategories = null; // null = not checked yet
@@ -1177,7 +1195,7 @@ function wireCreateCard(root){
         const createdIds = (data?.createHistoric?.historics || []).map(h => h.id);
         createMsg.innerHTML = `<div class="msg ok">Create request accepted for ${categories.map(categoryLabel).join(", ")} — ${createdIds.length} historic ID${createdIds.length===1?"":"s"} returned. Tracking status below.</div>`;
         createFollow.style.display = "block";
-        if(cardPollTimer) clearTimeout(cardPollTimer);
+        if(cardPollTimer) cardPollTimer.stop();
         cardPollTimer = trackNewHistorics(createBoard, Number(searchId), categories, startISO, endISO, createdIds);
       }
     }catch(err){
@@ -1188,31 +1206,58 @@ function wireCreateCard(root){
   });
 
   removeCardBtn.addEventListener("click", ()=>{
+    if(cardPollTimer) cardPollTimer.stop();
     root.remove();
+  });
+
+  stopTrackingBtn.addEventListener("click", ()=>{
+    if(cardPollTimer) cardPollTimer.stop();
+    const note = document.createElement("div");
+    note.className = "msg info";
+    note.textContent = "Stopped watching. The historic keeps processing on Pulsar's side regardless — check the Preview tab anytime to see where it landed.";
+    createBoard.appendChild(note);
   });
 }
 
 function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, createdIds){
   let ticks = 0;
+  let stopped = false;
   let timerHandle = null;
+  const startedAt = Date.now();
   boardEl.innerHTML = `<div class="msg info">Polling for status…</div>`;
 
+  function currentInterval(){
+    // Poll briskly for the first 2 minutes, then back off to every 20s —
+    // some historics genuinely take well over 6 minutes, so this keeps
+    // watching indefinitely rather than giving up, without hammering the
+    // API at a 4s cadence for hours.
+    return ticks < 30 ? POLL_INTERVAL_MS : 20000;
+  }
+
+  function elapsedLabel(){
+    const mins = Math.round((Date.now() - startedAt) / 60000);
+    return mins < 1 ? "under a minute" : `${mins} minute${mins===1?"":"s"}`;
+  }
+
   async function tick(){
+    if(stopped) return;
     ticks++;
     let all;
     try{
       const paged = await fetchAllHistorics(searchId, (loaded,total)=>{
-        boardEl.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
+        if(!stopped) boardEl.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
       });
       all = paged.nodes;
     }catch(err){
-      boardEl.innerHTML = `<div class="msg error">${err.message}</div>`;
+      if(!stopped) boardEl.innerHTML = `<div class="msg error">${err.message}</div>`;
       return;
     }
+    if(stopped) return;
 
     let matched;
     if(createdIds && createdIds.length){
-      matched = all.filter(n => createdIds.includes(n.id));
+      const createdIdStrings = createdIds.map(String);
+      matched = all.filter(n => createdIdStrings.includes(String(n.id)));
     } else {
       matched = all.filter(n =>
         categories.includes(n.category) &&
@@ -1232,23 +1277,23 @@ function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, crea
         note.textContent = `${failed.length} of ${matched.length} categories returned ERROR (see banner above) — usually means that data source isn't present on this search. The other ${matched.length - failed.length} are ready.`;
       }else{
         note.className = "msg ok";
-        note.textContent = `All ${matched.length} categories previewed.`;
+        note.textContent = `All ${matched.length} categories previewed after ${elapsedLabel()}.`;
       }
       boardEl.appendChild(note);
       return;
     }
 
-    if(ticks >= POLL_MAX_TICKS){
-      const note = document.createElement("div");
-      note.className = "msg error";
-      note.textContent = "Stopped polling after ~6 minutes without every category completing. Check the preview tab manually.";
-      boardEl.appendChild(note);
-      return;
-    }
-    timerHandle = setTimeout(tick, POLL_INTERVAL_MS);
+    const note = document.createElement("div");
+    note.className = "msg info";
+    note.textContent = `Still watching — ${elapsedLabel()} elapsed. This will keep checking as long as this tab stays open; large historics can genuinely take a while.`;
+    boardEl.appendChild(note);
+
+    timerHandle = setTimeout(tick, currentInterval());
   }
   tick();
-  return timerHandle;
+  return {
+    stop(){ stopped = true; if(timerHandle) clearTimeout(timerHandle); }
+  };
 }
 
 // ================= PREVIEW CARDS =================
@@ -1286,12 +1331,38 @@ function wirePreviewCard(root){
 
   let pollTimer = null;
   let pollTicks = 0;
+  let pollStartedAt = null;
   let currentPreviewNodes = [];
   let currentSearchId = null;
 
   function refreshResultsView(){
-    const filtered = hasActiveFilter() ? getFilteredNodes() : currentPreviewNodes;
-    renderResults(resultsAreaEl, filtered);
+    if(hasActiveFilter()){
+      const filtered = getFilteredNodes();
+      if(!filtered.length && currentPreviewNodes.length){
+        renderFilterMismatch();
+        return;
+      }
+      renderResults(resultsAreaEl, filtered);
+    } else {
+      renderResults(resultsAreaEl, currentPreviewNodes);
+    }
+  }
+
+  function renderFilterMismatch(){
+    const { start: fs, end: fe } = dateRangePicker.getRange();
+    const fc = categorySelect.value;
+    const starts = currentPreviewNodes.map(n => n.startDate.slice(0,10));
+    const ends = currentPreviewNodes.map(n => n.endDate.slice(0,10));
+    const actualMinStart = starts.reduce((m,d)=> (!m || d < m) ? d : m, null);
+    const actualMaxEnd = ends.reduce((m,d)=> (!m || d > m) ? d : m, null);
+    const actualCats = Array.from(new Set(currentPreviewNodes.map(n=>n.category))).map(categoryLabel).join(", ");
+    resultsAreaEl.innerHTML = `
+      <div class="msg error">
+        <b>No rows match this filter — here's why, based on what's actually loaded:</b><br><br>
+        You filtered for: <b>${fs || "any start"} → ${fe || "any end"}</b>${fc ? `, category <b>${categoryLabel(fc)}</b>` : ""}.<br>
+        The data actually loaded covers: <b>${actualMinStart} → ${actualMaxEnd}</b>, categories: <b>${actualCats || "none"}</b>.<br><br>
+        The filter requires each row's own window to sit fully inside the range you picked. If the dates above look close but not identical to what you selected, that's the mismatch — Pulsar's recorded start/end on the historic itself doesn't exactly equal what was originally requested when it was created.
+      </div>`;
   }
 
   const dateRangePicker = createDateRangePicker(dateRangeRoot, { onChange: refreshResultsView });
@@ -1369,13 +1440,11 @@ function wirePreviewCard(root){
     const pending = nodes.filter(n => !isSettled(n.status));
 
     if(pending.length){
-      pollStatusEl.innerHTML = `<div class="msg info">${nodes.length - pending.length} of ${nodes.length} sources settled (poll ${pollTicks}) — checking again every ${POLL_INTERVAL_MS/1000}s.</div>`;
-      if(pollTicks >= POLL_MAX_TICKS){
-        pollStatusEl.innerHTML = `<div class="msg error">Stopped after ~6 minutes with sources still pending. Hit Fetch again to resume.</div>`;
-        stopPolling();
-        return;
-      }
-      pollTimer = setTimeout(pollPreview, POLL_INTERVAL_MS);
+      const mins = Math.round((Date.now() - pollStartedAt) / 60000);
+      const elapsedLabel = mins < 1 ? "under a minute" : `${mins} minute${mins===1?"":"s"}`;
+      const interval = pollTicks < 30 ? POLL_INTERVAL_MS : 20000;
+      pollStatusEl.innerHTML = `<div class="msg info">${nodes.length - pending.length} of ${nodes.length} sources settled — ${elapsedLabel} elapsed. Still watching as long as this tab stays open; use "Stop polling" anytime.</div>`;
+      pollTimer = setTimeout(pollPreview, interval);
     } else {
       stopPolling();
       const errored = nodes.filter(n=>isFailed(n.status)).length;
@@ -1398,6 +1467,7 @@ function wirePreviewCard(root){
     stopPolling();
     currentSearchId = Number(searchId);
     pollTicks = 0;
+    pollStartedAt = Date.now();
     stopPollBtn.style.display = "inline-block";
     pollPreview();
   });
