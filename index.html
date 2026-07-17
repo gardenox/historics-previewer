@@ -469,26 +469,8 @@
     <div class="filterArea" style="display:none;">
       <div class="filters">
         <div class="field">
-          <label>Date range</label>
-          <div class="daterange dateRangeRoot">
-            <button type="button" class="dr-toggle">Select dates…</button>
-            <div class="dr-panel">
-              <div class="dr-nav">
-                <button type="button" class="ghost dr-prev">‹</button>
-                <span class="dr-month-label"></span>
-                <button type="button" class="ghost dr-next">›</button>
-              </div>
-              <div class="dr-grid"></div>
-              <div class="dr-actions"><button type="button" class="ghost dr-clear">Clear</button></div>
-            </div>
-          </div>
-        </div>
-        <div class="field">
           <label>Category</label>
           <select class="f_category"><option value="">All</option></select>
-        </div>
-        <div class="field" style="flex:0 0 auto;">
-          <button class="ghost applyFilterBtn" type="button">Apply</button>
         </div>
         <div class="field" style="flex:0 0 auto;">
           <button class="ghost clearFilterBtn" type="button">Clear</button>
@@ -1315,9 +1297,7 @@ function wirePreviewCard(root){
   const pollStatusEl = root.querySelector(".pollStatus");
   const previewMsgEl = root.querySelector(".previewMsg");
   const filterArea = root.querySelector(".filterArea");
-  const dateRangeRoot = root.querySelector(".dateRangeRoot");
   const categorySelect = root.querySelector(".f_category");
-  const applyFilterBtn = root.querySelector(".applyFilterBtn");
   const clearFilterBtn = root.querySelector(".clearFilterBtn");
   const resultsAreaEl = root.querySelector(".resultsArea");
   const removeCardBtn = root.querySelector(".removeCardBtn");
@@ -1336,51 +1316,13 @@ function wirePreviewCard(root){
   let currentSearchId = null;
 
   function refreshResultsView(){
-    if(hasActiveFilter()){
-      const filtered = getFilteredNodes();
-      if(!filtered.length && currentPreviewNodes.length){
-        renderFilterMismatch();
-        return;
-      }
-      renderResults(resultsAreaEl, filtered);
-    } else {
-      renderResults(resultsAreaEl, currentPreviewNodes);
-    }
-  }
-
-  function renderFilterMismatch(){
-    const { start: fs, end: fe } = dateRangePicker.getRange();
-    const fc = categorySelect.value;
-    const starts = currentPreviewNodes.map(n => n.startDate.slice(0,10));
-    const ends = currentPreviewNodes.map(n => n.endDate.slice(0,10));
-    const actualMinStart = starts.reduce((m,d)=> (!m || d < m) ? d : m, null);
-    const actualMaxEnd = ends.reduce((m,d)=> (!m || d > m) ? d : m, null);
-    const actualCats = Array.from(new Set(currentPreviewNodes.map(n=>n.category))).map(categoryLabel).join(", ");
-    resultsAreaEl.innerHTML = `
-      <div class="msg error">
-        <b>No rows match this filter — here's why, based on what's actually loaded:</b><br><br>
-        You filtered for: <b>${fs || "any start"} → ${fe || "any end"}</b>${fc ? `, category <b>${categoryLabel(fc)}</b>` : ""}.<br>
-        The data actually loaded covers: <b>${actualMinStart} → ${actualMaxEnd}</b>, categories: <b>${actualCats || "none"}</b>.<br><br>
-        The filter requires each row's own window to sit fully inside the range you picked. If the dates above look close but not identical to what you selected, that's the mismatch — Pulsar's recorded start/end on the historic itself doesn't exactly equal what was originally requested when it was created.
-      </div>`;
-  }
-
-  const dateRangePicker = createDateRangePicker(dateRangeRoot, { onChange: refreshResultsView });
-
-  function hasActiveFilter(){
-    const { start, end } = dateRangePicker.getRange();
-    return !!(start || end || categorySelect.value);
+    const filtered = categorySelect.value ? getFilteredNodes() : currentPreviewNodes;
+    renderResults(resultsAreaEl, filtered);
   }
 
   function getFilteredNodes(){
-    const { start: fs, end: fe } = dateRangePicker.getRange();
     const fc = categorySelect.value;
-    return currentPreviewNodes.filter(n=>{
-      if(fc && n.category !== fc) return false;
-      if(fs && n.startDate.slice(0,10) < fs) return false;
-      if(fe && n.endDate.slice(0,10) > fe) return false;
-      return true;
-    });
+    return currentPreviewNodes.filter(n => !fc || n.category === fc);
   }
 
   function setupFilterOptions(nodes){
@@ -1392,9 +1334,7 @@ function wirePreviewCard(root){
   }
 
   categorySelect.addEventListener("change", refreshResultsView);
-  applyFilterBtn.addEventListener("click", refreshResultsView);
   clearFilterBtn.addEventListener("click", ()=>{
-    dateRangePicker.setRange(null, null);
     categorySelect.value = "";
     refreshResultsView();
   });
