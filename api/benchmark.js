@@ -11,6 +11,17 @@
 // function at /api/benchmark on its own domain.
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
+
+function normalizedSupabaseBase() {
+  if (!SUPABASE_URL) return null;
+  let url = SUPABASE_URL.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    url = "https://" + url; // tolerate the protocol being left off in the env var
+  }
+  url = url.replace(/\/rest\/v1\/?$/, ""); // tolerate the /rest/v1 suffix being included by mistake
+  url = url.replace(/\/$/, ""); // strip any trailing slash
+  return url;
+}
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
 function supabaseHeaders(extra) {
@@ -31,22 +42,48 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+  const supabaseBase = normalizedSupabaseBase();
+  if (!supabaseBase || !SUPABASE_SECRET_KEY) {
     res.status(500).json({
       error: "SUPABASE_URL and/or SUPABASE_SECRET_KEY aren't set as environment variables on this deployment.",
     });
     return;
   }
 
-  const base = `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/benchmark_entries`;
+  const base = `${supabaseBase}/rest/v1/benchmark_entries`;
 
   try {
     if (req.method === "GET") {
-      const upstream = await fetch(`${base}?select=*`, {
-        headers: supabaseHeaders(),
-      });
-      const text = await upstream.text();
-      res.status(upstream.status).setHeader("Content-Type", "application/json").send(text);
+      // Supabase/PostgREST caps how many rows a single request returns
+      // (a project-level "Max Rows" setting). Paginate with limit/offset,
+      // always continuing until a page comes back empty — not until a page
+      // is "smaller than requested", since the server's cap may itself be
+      // smaller than what we ask for, which would otherwise look like the
+      // end of the data when it isn't.
+      let allRows = [];
+      let offset = 0;
+      const pageSize = 1000;
+      let guard = 0;
+      while (true) {
+        guard++;
+        const upstream = await fetch(`${base}?select=*&order=id.asc&limit=${pageSize}&offset=${offset}`, {
+          headers: supabaseHeaders(),
+        });
+        if (!upstream.ok) {
+          const text = await upstream.text();
+          res.status(upstream.status).setHeader("Content-Type", "application/json").send(text);
+          return;
+        }
+        const page = await upstream.json();
+        if (!page.length) break;
+        allRows = allRows.concat(page);
+        offset += page.length;
+        if (guard > 50) {
+          res.status(502).json({ error: "Stopped after 50 pages fetching benchmark_entries — check for a pagination loop." });
+          return;
+        }
+      }
+      res.status(200).json(allRows);
       return;
     }
 
