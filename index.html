@@ -413,6 +413,7 @@
         <div class="sp-listmode">
           <input type="text" class="sp-filter" placeholder="Type to search by name…" autocomplete="off">
           <div class="sp-panel"></div>
+          <div class="hint sp-scope-toggle" style="cursor:pointer;"></div>
         </div>
         <div class="sp-manualmode" style="display:none;">
           <input type="text" class="sp-manualid" placeholder="Enter search ID directly" autocomplete="off">
@@ -482,6 +483,7 @@
           <div class="sp-listmode">
             <input type="text" class="sp-filter" placeholder="Type to search by name…" autocomplete="off">
             <div class="sp-panel"></div>
+            <div class="hint sp-scope-toggle" style="cursor:pointer;"></div>
           </div>
           <div class="sp-manualmode" style="display:none;">
             <input type="text" class="sp-manualid" placeholder="Enter search ID directly" autocomplete="off">
@@ -889,19 +891,34 @@ function createSearchPicker(root){
   const filterInput = root.querySelector(".sp-filter");
   const panel = root.querySelector(".sp-panel");
   const manualInput = root.querySelector(".sp-manualid");
+  const scopeToggle = root.querySelector(".sp-scope-toggle");
 
   let manual = false;
   let selectedId = null;
   let selectedName = null;
+  let showAllSearches = false; // default: only your fixed teams, matching the Teams tab
 
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
 
+  function isTeamSearch(name){
+    return TEAMS_TO_BENCHMARK.some(t => (name || "").startsWith(t + " - "));
+  }
+
+  function updateScopeToggleLabel(){
+    scopeToggle.textContent = showAllSearches ? "Showing all searches — show only my teams" : "Showing only my teams — show all searches";
+  }
+
   function renderPanel(query){
     const q = (query || "").toLowerCase();
-    const list = appState.searches || [];
+    const fullList = appState.searches || [];
+    const list = showAllSearches ? fullList : fullList.filter(s => isTeamSearch(s.name));
     const matches = list.filter(s => (s.name || "").toLowerCase().includes(q)).slice(0, 50);
-    if(!list.length){
+    if(!fullList.length){
       panel.innerHTML = `<div class="sp-empty">No searches loaded yet — connect first, or use "Enter ID manually".</div>`;
+      return;
+    }
+    if(!list.length){
+      panel.innerHTML = `<div class="sp-empty">None of your teams' searches loaded — try "show all searches" above, or check the team list.</div>`;
       return;
     }
     if(!matches.length){
@@ -932,6 +949,14 @@ function createSearchPicker(root){
   });
   document.addEventListener("click", (e)=>{ if(!root.contains(e.target)) panel.classList.remove("open"); });
 
+  scopeToggle.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    showAllSearches = !showAllSearches;
+    updateScopeToggleLabel();
+    renderPanel(filterInput.value);
+  });
+  updateScopeToggleLabel();
+
   toggleModeBtn.addEventListener("click", ()=>{
     manual = !manual;
     listMode.style.display = manual ? "none" : "block";
@@ -959,17 +984,24 @@ function renderResults(area, nodes){
     return;
   }
 
+  // Group by category + exact window, NOT category alone — two separate
+  // historics sharing a category (e.g. two different X periods) must never
+  // be summed into one row. Each distinct window gets its own row.
   const groups = {};
   nodes.forEach(n=>{
-    (groups[n.category] = groups[n.category] || []).push(n);
+    const key = `${n.category}|${n.startDate}|${n.endDate}`;
+    (groups[key] = groups[key] || []).push(n);
   });
 
   let totalDone = 0;
   let anyPending = false;
-  const erroredCats = [];
-  const archivedCats = [];
+  const erroredRows = [];
+  const archivedRowsList = [];
 
-  const rows = Object.entries(groups).map(([cat, rs])=>{
+  const rows = Object.values(groups).map(rs=>{
+    const cat = rs[0].category;
+    const startDate = rs[0].startDate;
+    const endDate = rs[0].endDate;
     const doneRows = rs.filter(r => isTerminal(r.status));
     const failedRows = rs.filter(r => isFailed(r.status));
     const archivedRows = rs.filter(r => isArchived(r.status));
@@ -977,18 +1009,15 @@ function renderResults(area, nodes){
     const sum = doneRows.reduce((s,r)=> s + (Number(r.previewResult) || 0), 0);
     totalDone += sum;
 
-    const minStart = rs.reduce((m,r)=> (!m || r.startDate < m) ? r.startDate : m, null);
-    const maxEnd = rs.reduce((m,r)=> (!m || r.endDate > m) ? r.endDate : m, null);
-
     let statusLabel, statusClass;
     if(failedRows.length){
       statusLabel = "ERROR";
       statusClass = "st-error";
-      erroredCats.push(cat);
+      erroredRows.push({cat, startDate, endDate});
     } else if(archivedRows.length && !pendingRows.length){
       statusLabel = archivedRows[0].status;
       statusClass = "st-archived";
-      archivedCats.push(cat);
+      archivedRowsList.push({cat, startDate, endDate});
     } else if(pendingRows.length){
       anyPending = true;
       const p = pendingRows[0];
@@ -1002,42 +1031,48 @@ function renderResults(area, nodes){
       statusClass = "st-progress";
     }
 
-    return { cat, sum, statusLabel, statusClass, hasValue: doneRows.length > 0, minStart, maxEnd };
+    return { cat, startDate, endDate, sum, statusLabel, statusClass, hasValue: doneRows.length > 0 };
   });
 
-  rows.sort((a,b)=> b.sum - a.sum);
+  // Sort by category, then chronologically within each category — keeps
+  // multiple periods of the same source next to each other for comparison.
+  rows.sort((a,b)=>{
+    const catCmp = categoryLabel(a.cat).localeCompare(categoryLabel(b.cat));
+    if(catCmp !== 0) return catCmp;
+    return (a.startDate||"").localeCompare(b.startDate||"");
+  });
 
   let html = "";
 
-  if(erroredCats.length || archivedCats.length){
+  if(erroredRows.length || archivedRowsList.length){
     html += `<div class="msg error"><b>Check before relying on these numbers:</b> `;
     const parts = [];
-    if(erroredCats.length) parts.push(`${erroredCats.map(categoryLabel).join(", ")} returned status ERROR — most likely that data source isn't present on this search, or the request was otherwise invalid.`);
-    if(archivedCats.length) parts.push(`${archivedCats.map(categoryLabel).join(", ")} came back as OLD/PRUNING — this historic is no longer available and won't produce a result.`);
+    if(erroredRows.length) parts.push(`${erroredRows.map(r=>`${categoryLabel(r.cat)} (${fmtDate(r.startDate)} → ${fmtDate(r.endDate)})`).join(", ")} returned status ERROR — most likely that data source isn't present on this search, or the request was otherwise invalid.`);
+    if(archivedRowsList.length) parts.push(`${archivedRowsList.map(r=>`${categoryLabel(r.cat)} (${fmtDate(r.startDate)} → ${fmtDate(r.endDate)})`).join(", ")} came back as OLD/PRUNING — this historic is no longer available and won't produce a result.`);
     html += parts.join(" ") + `</div>`;
   }
 
   if(anyPending){
-    const waitingOn = rows.filter(r => r.statusClass === "st-progress").map(r => `${categoryLabel(r.cat)} (${r.statusLabel})`).join(", ");
+    const waitingOn = rows.filter(r => r.statusClass === "st-progress").map(r => `${categoryLabel(r.cat)} ${fmtDate(r.startDate)}→${fmtDate(r.endDate)} (${r.statusLabel})`).join(", ");
     html += `<div class="msg info">Still previewing: ${waitingOn || "…"}. The numbers below update automatically as each source finishes — nothing here needs a refresh.</div>`;
   }
 
-  const overallStart = rows.reduce((m,r)=> (r.minStart && (!m || r.minStart < m)) ? r.minStart : m, null);
-  const overallEnd = rows.reduce((m,r)=> (r.maxEnd && (!m || r.maxEnd > m)) ? r.maxEnd : m, null);
-  const sameWindowThroughout = rows.every(r => r.minStart === overallStart && r.maxEnd === overallEnd);
+  const overallStart = rows.reduce((m,r)=> (r.startDate && (!m || r.startDate < m)) ? r.startDate : m, null);
+  const overallEnd = rows.reduce((m,r)=> (r.endDate && (!m || r.endDate > m)) ? r.endDate : m, null);
+  const sameWindowThroughout = rows.every(r => r.startDate === overallStart && r.endDate === overallEnd);
 
   html += `
     <div class="summary">
       <div class="card total">
-        <div class="label">${anyPending ? "Total (previewed so far)" : "Total (all sources)"}</div>
+        <div class="label">${anyPending ? "Total (previewed so far)" : "Total (all rows)"}</div>
         <div class="value">${totalDone.toLocaleString()}</div>
       </div>
       <div class="card">
-        <div class="label">Data sources</div>
+        <div class="label">Rows</div>
         <div class="value">${rows.length}</div>
       </div>
       <div class="card">
-        <div class="label">Sources done</div>
+        <div class="label">Done</div>
         <div class="value" style="font-size:15px;">${rows.filter(r=>r.statusClass==="st-success").length} / ${rows.length}</div>
       </div>
       <div class="card">
@@ -1054,7 +1089,7 @@ function renderResults(area, nodes){
       <td>${categoryLabel(r.cat)}</td>
       <td class="num">${r.hasValue ? r.sum.toLocaleString() : "—"}</td>
       <td class="num">${pct != null ? pct.toFixed(1) + "%" : "—"}</td>
-      <td>${fmtDate(r.minStart)} → ${fmtDate(r.maxEnd)}</td>
+      <td>${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}</td>
       <td><span class="badge ${r.statusClass}">${r.statusLabel}</span></td>
     </tr>`;
   });
@@ -1063,7 +1098,7 @@ function renderResults(area, nodes){
     html += `<div class="hint">* percentages are of the total previewed so far, and will shift as the remaining sources complete.</div>`;
   }
   if(!sameWindowThroughout){
-    html += `<div class="hint">* the top date range spans the earliest start to the latest end across all rows — categories don't all share the same window here, so check the per-row Window column for the exact range on each.</div>`;
+    html += `<div class="hint">* rows here cover different date windows — each row's own Window column is its exact, un-merged range.</div>`;
   }
   area.innerHTML = html;
 }
@@ -1726,6 +1761,33 @@ function renderEvoBody(){
 // how everything else in this tool is built. Raw totals only, x-position
 // based on each window's actual start date (not just selection order), so
 // gaps and spacing reflect real time.
+function niceAxisStep(rawStep){
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const residual = rawStep / magnitude;
+  let niceResidual;
+  if(residual > 5) niceResidual = 10;
+  else if(residual > 2) niceResidual = 5;
+  else if(residual > 1) niceResidual = 2;
+  else niceResidual = 1;
+  return niceResidual * magnitude;
+}
+function computeNiceTicks(maxVal, desiredCount){
+  if(maxVal <= 0) return [0];
+  const step = niceAxisStep(maxVal / desiredCount);
+  const ticks = [];
+  let v = 0;
+  while(v < maxVal){ ticks.push(v); v += step; }
+  ticks.push(v); // one more past the real max, giving headroom above the highest point
+  return ticks;
+}
+function trimTrailingZeros(s){ return s.replace(/\.?0+$/,''); }
+function formatAxisValue(v){
+  const abs = Math.abs(v);
+  if(abs >= 1e6) return trimTrailingZeros((v/1e6).toFixed(2)) + "m";
+  if(abs >= 1e3) return trimTrailingZeros((v/1e3).toFixed(1)) + "k";
+  return String(Math.round(v));
+}
+
 function renderEvoChart(){
   const area = document.getElementById("evoChartArea");
   if(!area) return;
@@ -1734,31 +1796,49 @@ function renderEvoChart(){
     area.innerHTML = `<div class="msg info">Select at least one period below to plot it.</div>`;
     return;
   }
-  const W = 640, H = 220, padL = 60, padR = 20, padT = 20, padB = 50;
+  const W = 680, H = 240, padL = 75, padR = 40, padT = 34, padB = 55;
   const values = chosen.map(n => Number(n.previewResult) || 0);
-  const maxVal = Math.max(1, ...values);
+  const rawMax = Math.max(1, ...values);
+  const ticks = computeNiceTicks(rawMax, 5);
+  const axisMax = ticks[ticks.length - 1]; // scale the chart to the rounded top tick, not the raw max
   const times = chosen.map(n => new Date(n.startDate).getTime());
   const minT = Math.min(...times), maxT = Math.max(...times);
   const timeSpan = Math.max(1, maxT - minT);
+  const isSingle = chosen.length === 1;
 
-  function xAt(t){ return padL + ((t - minT) / timeSpan) * (W - padL - padR); }
-  function yAt(v){ return H - padB - (v / maxVal) * (H - padT - padB); }
+  function xAt(t){
+    if(isSingle) return padL + (W - padL - padR) / 2; // nothing to position relative to — just center it
+    return padL + ((t - minT) / timeSpan) * (W - padL - padR);
+  }
+  function yAt(v){ return H - padB - (v / axisMax) * (H - padT - padB); }
 
   const points = chosen.map((n,i) => ({ x: xAt(times[i]), y: yAt(values[i]), n, v: values[i] }));
   const pointsStr = points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
-    const y = H - padB - f * (H - padT - padB);
-    const val = Math.round(maxVal * f);
+  const gridLines = ticks.map(t => {
+    const y = yAt(t);
     return `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--line)" stroke-width="1"/>
-            <text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--muted-2)" font-family="var(--mono)">${val.toLocaleString()}</text>`;
+            <text x="${padL-10}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--muted-2)" font-family="var(--mono)">${formatAxisValue(t)}</text>`;
   }).join("");
 
-  const dots = points.map(p => `
+  // Center-anchored labels work for interior points, but the first/last
+  // point has nothing to "extend into" on one side — center-anchoring them
+  // either collides with the y-axis labels (first point) or runs off the
+  // right edge (last point). Anchor those two toward the inside instead.
+  // A single selected point is both first and last at once, but it's
+  // centered with room on both sides, so it gets plain middle anchoring.
+  const dots = points.map((p,i) => {
+    const isFirst = i === 0 && !isSingle;
+    const isLast = i === points.length - 1 && !isSingle;
+    const valueAnchor = isFirst ? "start" : isLast ? "end" : "middle";
+    const valueX = isFirst ? p.x + 6 : isLast ? p.x - 6 : p.x;
+    const dateAnchor = isFirst ? "start" : isLast ? "end" : "middle";
+    return `
     <circle cx="${p.x}" cy="${p.y}" r="4" fill="var(--accent)"/>
-    <text x="${p.x}" y="${p.y-10}" text-anchor="middle" font-size="10" fill="var(--text)" font-family="var(--mono)">${p.v.toLocaleString()}</text>
-    <text x="${p.x}" y="${H-padB+16}" text-anchor="middle" font-size="9.5" fill="var(--muted-2)" font-family="var(--mono)" transform="rotate(20 ${p.x} ${H-padB+16})">${fmtDate(p.n.startDate)}</text>
-  `).join("");
+    <text x="${valueX}" y="${p.y-10}" text-anchor="${valueAnchor}" font-size="10" fill="var(--text)" font-family="var(--mono)">${p.v.toLocaleString()}</text>
+    <text x="${p.x}" y="${H-padB+16}" text-anchor="${dateAnchor}" font-size="9.5" fill="var(--muted-2)" font-family="var(--mono)" transform="rotate(20 ${p.x} ${H-padB+16})">${fmtDate(p.n.startDate)}</text>
+  `;
+  }).join("");
 
   area.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
     ${gridLines}
@@ -2262,6 +2342,8 @@ function periodKeyOf(r){ return r.start_date + "_" + r.end_date; }
 
 let heatZoom = null; // null = global shading; {type:'team',value} or {type:'scope',value} to zoom
 
+let hiddenScopes = new Set(); // countries explicitly hidden from the grid — empty means show all
+
 function renderBenchmarkGrid(){
   const area = document.getElementById("benchmarkGridArea");
   if(!benchmarkRows.length){
@@ -2275,10 +2357,11 @@ function renderBenchmarkGrid(){
   if(!benchmarkPeriod || !periods.some(p=>p.key===benchmarkPeriod)) benchmarkPeriod = periods[0].key;
 
   const teams = [...new Set(benchmarkRows.map(r=>r.team))];
-  const scopes = [...new Set(benchmarkRows.map(r=>r.scope))];
+  const allScopes = [...new Set(benchmarkRows.map(r=>r.scope))];
+  const scopes = allScopes.filter(s => !hiddenScopes.has(s));
   const [curStart, curEnd] = benchmarkPeriod.split("_");
   const rowsForPeriod = benchmarkRows.filter(r=> r.start_date===curStart && r.end_date===curEnd);
-  const globalMax = Math.max(1, ...rowsForPeriod.map(r=>Number(r.preview_result)||0));
+  const globalMax = Math.max(1, ...rowsForPeriod.filter(r=>scopes.includes(r.scope)).map(r=>Number(r.preview_result)||0));
 
   // Per-row and per-column maxes, computed once, used only when zoomed —
   // this is what lets "which country matters most to this one team" or
@@ -2294,6 +2377,8 @@ function renderBenchmarkGrid(){
 
   const periodOptions = periods.map(p=>`<option value="${p.key}" ${p.key===benchmarkPeriod?'selected':''}>${fmtDate(p.start)} → ${fmtDate(p.end)}</option>`).join("");
   const zoomLabel = heatZoom ? (heatZoom.type==='team' ? `Zoomed: ${heatZoom.value} (its own countries, relative to each other)` : `Zoomed: ${heatZoom.value} (all teams, relative to each other here)`) : null;
+  const visibleCount = scopes.length;
+  const scopeToggleLabel = hiddenScopes.size === 0 ? `All ${allScopes.length} countries shown` : `${visibleCount} of ${allScopes.length} countries shown`;
 
   const headCells = scopes.map(s=>{
     const isZoomed = heatZoom && heatZoom.type==='scope' && heatZoom.value===s;
@@ -2326,9 +2411,18 @@ function renderBenchmarkGrid(){
   });
 
   area.innerHTML = `
-    <div class="field" style="max-width:280px;">
-      <label>Period</label>
-      <select id="periodSel">${periodOptions}</select>
+    <div class="row">
+      <div class="field" style="max-width:280px;">
+        <label>Period</label>
+        <select id="periodSel">${periodOptions}</select>
+      </div>
+      <div class="field" style="max-width:280px;">
+        <label>Countries shown</label>
+        <div class="multiselect" id="scopeVisPicker">
+          <button type="button" class="ms-toggle" id="scopeVisToggle">${scopeToggleLabel}</button>
+          <div class="ms-panel" id="scopeVisPanel"></div>
+        </div>
+      </div>
     </div>
     <div class="hint" style="margin-bottom:8px;">Click a team name or a country header to shade that row/column by its own values instead of the whole grid's. ${zoomLabel ? `<span style="color:var(--accent);">${zoomLabel}</span> — click it again to return to the overall view.` : ''}</div>
     <div style="overflow-x:auto;border:1px solid var(--line);border-radius:4px;">
@@ -2345,6 +2439,29 @@ function renderBenchmarkGrid(){
     activeTrendCell = null;
     renderBenchmarkGrid();
   });
+
+  const scopeVisPanel = document.getElementById("scopeVisPanel");
+  scopeVisPanel.innerHTML = allScopes.map(s => `
+    <label class="ms-item">
+      <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"}>
+      <span>${s}</span>
+    </label>
+  `).join("");
+  scopeVisPanel.querySelectorAll("input[type=checkbox]").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      if(cb.checked) hiddenScopes.delete(cb.value); else hiddenScopes.add(cb.value);
+      renderBenchmarkGrid();
+    });
+  });
+  document.getElementById("scopeVisToggle").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    scopeVisPanel.classList.toggle("open");
+  });
+  document.addEventListener("click", (e)=>{
+    const picker = document.getElementById("scopeVisPicker");
+    if(picker && !picker.contains(e.target)) scopeVisPanel.classList.remove("open");
+  });
+
   area.querySelectorAll("[data-team-header]").forEach(el=>{
     el.addEventListener("click", ()=>{
       const t = el.dataset.teamHeader;
