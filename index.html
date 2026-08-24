@@ -750,6 +750,7 @@ document.getElementById("connectBtn").addEventListener("click", async ()=>{
   msgEl.innerHTML = `<div class="msg ok">Token stored for this session. Calling ${appState.endpoint}</div>`;
   document.getElementById("mainArea").style.display = "block";
   await loadSearchesList();
+  await loadBenchmarkGrid();
 });
 
 document.getElementById("refreshSearchesBtn").addEventListener("click", loadSearchesList);
@@ -1505,20 +1506,41 @@ function trackTeamNewPeriod(searchId, createdIds){
   tick();
 }
 
+// True if this exact search+category+window is already saved to the
+// benchmark table — lets historic lists show that at a glance instead of
+// only being visible by switching to the Benchmark tab.
+function isAlreadyInBenchmark(searchId, category, startDateISO, endDateISO){
+  const sd = fmtDateISO(startDateISO), ed = fmtDateISO(endDateISO);
+  return benchmarkRows.some(r =>
+    Number(r.search_id) === Number(searchId) &&
+    r.category === category &&
+    r.start_date === sd &&
+    r.end_date === ed
+  );
+}
+
 function renderTeamBlocksTable(area, nodes){
   const sorted = nodes.slice().sort((a,b)=> b.startDate.localeCompare(a.startDate));
   if(!sorted.length){
     area.innerHTML = `<div class="msg info">No X historics yet for this search.</div>`;
     return;
   }
+  const searchId = teamsState.activeSearch.searchId;
   const rowsHtml = sorted.map(n=>{
     const statusClass = isTerminal(n.status) ? "st-success" : isFailed(n.status) ? "st-error" : isArchived(n.status) ? "st-archived" : "st-progress";
     const canAdd = isTerminal(n.status);
+    const inBenchmark = canAdd && isAlreadyInBenchmark(searchId, "X", n.startDate, n.endDate);
+    let actionHtml = "";
+    if(inBenchmark){
+      actionHtml = `<span style="color:var(--done);font-size:11px;" title="Already saved to the Benchmark tab">✓ In benchmark</span>`;
+    } else if(canAdd){
+      actionHtml = `<button class="ghost" data-add-id="${n.id}" style="font-size:11px;padding:3px 8px;">Add to benchmark</button>`;
+    }
     return `<div class="board-row" style="grid-template-columns: 1fr 110px 140px 150px;">
       <div>${fmtDate(n.startDate)} → ${fmtDate(n.endDate)}</div>
       <div class="num">${n.previewResult!=null ? n.previewResult.toLocaleString() : "—"}</div>
       <div><span class="badge ${statusClass}">${n.status}</span></div>
-      <div class="num">${canAdd ? `<button class="ghost" data-add-id="${n.id}" style="font-size:11px;padding:3px 8px;">Add to benchmark</button>` : ""}</div>
+      <div class="num">${actionHtml}</div>
     </div>`;
   }).join("");
   area.innerHTML = `<div class="board">
@@ -1550,7 +1572,10 @@ function renderTeamBlocksTable(area, nodes){
           const t = await res.text();
           throw new Error(`HTTP ${res.status}: ${t.slice(0,200)}`);
         }
-        btn.outerHTML = `<span style="color:var(--done);font-size:11px;">✓ added</span>`;
+        // Refresh the in-memory benchmark data so this and any other
+        // still-visible rows immediately reflect the new saved state.
+        await loadBenchmarkGrid();
+        btn.outerHTML = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
       }catch(err){
         btn.disabled = false;
         btn.textContent = "Retry add";
@@ -1728,12 +1753,15 @@ function renderEvoBody(){
     document.getElementById("evoRequestPeriodBtn").addEventListener("click", goToTeamsFromEvolution);
     return;
   }
+  const evoSearchId = getTeamCoverage(evoState.team)[evoState.country]?.id;
   const rows = evoState.historics.map(n=>{
     const checked = evoState.selectedIds.has(n.id);
+    const inBenchmark = evoSearchId && isAlreadyInBenchmark(evoSearchId, "X", n.startDate, n.endDate);
     return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;font-family:var(--mono);font-size:12.5px;cursor:pointer;">
       <input type="checkbox" data-evo-id="${n.id}" ${checked?'checked':''} style="width:auto;">
       <span style="flex:1;">${fmtDate(n.startDate)} → ${fmtDate(n.endDate)}</span>
       <span style="width:90px;text-align:right;">${(n.previewResult||0).toLocaleString()}</span>
+      <span style="width:100px;text-align:right;font-size:10.5px;color:var(--done);">${inBenchmark ? '✓ In benchmark' : ''}</span>
     </label>`;
   }).join("");
 
