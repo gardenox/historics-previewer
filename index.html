@@ -500,18 +500,7 @@
 
     <div class="pollStatus"></div>
     <div class="previewMsg"></div>
-
-    <div class="filterArea" style="display:none;">
-      <div class="filters">
-        <div class="field">
-          <label>Category</label>
-          <select class="f_category"><option value="">All</option></select>
-        </div>
-        <div class="field" style="flex:0 0 auto;">
-          <button class="ghost clearFilterBtn" type="button">Clear</button>
-        </div>
-      </div>
-    </div>
+    <div class="hint" style="margin-top:8px;">Results below are X only — other data sources that exist on a search aren't shown here.</div>
 
     <div class="resultsArea"></div>
 
@@ -1732,7 +1721,11 @@ function renderEvoBody(){
     return;
   }
   if(!evoState.historics.length){
-    body.innerHTML = `<div class="msg info" style="margin-top:14px;">No previewed X historics yet for ${evoState.team} — ${evoState.country}.</div>`;
+    body.innerHTML = `
+      <div class="msg info" style="margin-top:14px;">No previewed X historics yet for ${evoState.team} — ${evoState.country}.</div>
+      <button class="ghost" id="evoRequestPeriodBtn" style="margin-top:10px;">Request new period</button>
+    `;
+    document.getElementById("evoRequestPeriodBtn").addEventListener("click", goToTeamsFromEvolution);
     return;
   }
   const rows = evoState.historics.map(n=>{
@@ -1746,10 +1739,14 @@ function renderEvoBody(){
 
   body.innerHTML = `
     <div class="divider"></div>
-    <div class="section-title">${evoState.team} — ${evoState.country}</div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+      <span>${evoState.team} — ${evoState.country}</span>
+      <button class="ghost" id="evoRequestPeriodBtn" style="font-size:11px;padding:4px 10px;">Request new period</button>
+    </div>
     <div id="evoChartArea" style="margin-bottom:16px;"></div>
     <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:4px;padding:4px;">${rows}</div>
   `;
+  document.getElementById("evoRequestPeriodBtn").addEventListener("click", goToTeamsFromEvolution);
   body.querySelectorAll("[data-evo-id]").forEach(cb=>{
     cb.addEventListener("change", ()=>{
       const id = Number(cb.dataset.evoId);
@@ -2126,9 +2123,6 @@ function wirePreviewCard(root){
   const stopPollBtn = root.querySelector(".stopPollBtn");
   const pollStatusEl = root.querySelector(".pollStatus");
   const previewMsgEl = root.querySelector(".previewMsg");
-  const filterArea = root.querySelector(".filterArea");
-  const categorySelect = root.querySelector(".f_category");
-  const clearFilterBtn = root.querySelector(".clearFilterBtn");
   const resultsAreaEl = root.querySelector(".resultsArea");
   const removeCardBtn = root.querySelector(".removeCardBtn");
   const benchmarkAddArea = root.querySelector(".benchmarkAddArea");
@@ -2146,28 +2140,8 @@ function wirePreviewCard(root){
   let currentSearchId = null;
 
   function refreshResultsView(){
-    const filtered = categorySelect.value ? getFilteredNodes() : currentPreviewNodes;
-    renderResults(resultsAreaEl, filtered);
+    renderResults(resultsAreaEl, currentPreviewNodes);
   }
-
-  function getFilteredNodes(){
-    const fc = categorySelect.value;
-    return currentPreviewNodes.filter(n => !fc || n.category === fc);
-  }
-
-  function setupFilterOptions(nodes){
-    filterArea.style.display = "block";
-    const previousValue = categorySelect.value;
-    const cats = Array.from(new Set(nodes.map(n=>n.category))).sort((a,b)=> categoryLabel(a).localeCompare(categoryLabel(b)));
-    categorySelect.innerHTML = `<option value="">All</option>` + cats.map(c=>`<option value="${c}">${categoryLabel(c)}</option>`).join("");
-    if(cats.includes(previousValue)) categorySelect.value = previousValue;
-  }
-
-  categorySelect.addEventListener("change", refreshResultsView);
-  clearFilterBtn.addEventListener("click", ()=>{
-    categorySelect.value = "";
-    refreshResultsView();
-  });
 
   function stopPolling(){
     if(pollTimer) clearTimeout(pollTimer);
@@ -2178,13 +2152,13 @@ function wirePreviewCard(root){
 
   async function pollPreview(){
     pollTicks++;
-    let nodes, totalCount;
+    let allNodes, totalCount;
     try{
       pollStatusEl.innerHTML = `<div class="msg info">Paging through historics…</div>`;
       const paged = await fetchAllHistorics(currentSearchId, (loaded,total)=>{
         pollStatusEl.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
       });
-      nodes = paged.nodes;
+      allNodes = paged.nodes;
       totalCount = paged.totalCount;
     }catch(err){
       previewMsgEl.innerHTML = `<div class="msg error">${err.message}</div>`;
@@ -2192,19 +2166,23 @@ function wirePreviewCard(root){
       return;
     }
 
+    // Pagination-completeness check against the RAW count (which covers
+    // every category) — checking it after filtering to X would falsely
+    // warn "stopped early" any time a search has other sources too.
+    if(totalCount != null && totalCount > allNodes.length){
+      previewMsgEl.innerHTML = `<div class="msg error">Heads up: the API reports ${totalCount} total historics but pagination only returned ${allNodes.length} — hasNextPage may have stopped early. Numbers below only reflect what was returned.</div>`;
+    } else {
+      previewMsgEl.innerHTML = "";
+    }
+
+    // Hard filter — this tool never displays or stores anything but X.
+    const nodes = allNodes.filter(n => n.category === "X");
     currentPreviewNodes = nodes;
 
     if(nodes.length){
       benchmarkAddArea.style.display = "block";
     }
 
-    if(totalCount != null && totalCount > nodes.length){
-      previewMsgEl.innerHTML = `<div class="msg error">Heads up: the API reports ${totalCount} total historics but pagination only returned ${nodes.length} — hasNextPage may have stopped early. Numbers below only reflect what was returned.</div>`;
-    } else {
-      previewMsgEl.innerHTML = "";
-    }
-
-    setupFilterOptions(nodes);
     refreshResultsView();
 
     const pending = nodes.filter(n => !isSettled(n.status));
@@ -2213,14 +2191,14 @@ function wirePreviewCard(root){
       const mins = Math.round((Date.now() - pollStartedAt) / 60000);
       const elapsedLabel = mins < 1 ? "under a minute" : `${mins} minute${mins===1?"":"s"}`;
       const interval = pollTicks < 30 ? POLL_INTERVAL_MS : 20000;
-      pollStatusEl.innerHTML = `<div class="msg info">${nodes.length - pending.length} of ${nodes.length} sources settled — ${elapsedLabel} elapsed. Still watching as long as this tab stays open; use "Stop polling" anytime.</div>`;
+      pollStatusEl.innerHTML = `<div class="msg info">${nodes.length - pending.length} of ${nodes.length} X sources settled — ${elapsedLabel} elapsed. Still watching as long as this tab stays open; use "Stop polling" anytime.</div>`;
       pollTimer = setTimeout(pollPreview, interval);
     } else {
       stopPolling();
       const errored = nodes.filter(n=>isFailed(n.status)).length;
       pollStatusEl.innerHTML = errored
-        ? `<div class="msg error">All ${nodes.length} sources settled — ${errored} came back ERROR (see banner above).</div>`
-        : `<div class="msg ok">All ${nodes.length} sources previewed.</div>`;
+        ? `<div class="msg error">All ${nodes.length} X sources settled — ${errored} came back ERROR (see banner above).</div>`
+        : `<div class="msg ok">All ${nodes.length} X sources previewed.</div>`;
     }
   }
 
@@ -2572,6 +2550,12 @@ function goCreateFromBenchmark(team, scope, start, end){
   } else {
     openTeamConfirmCreate(team, scope, { start, end });
   }
+}
+
+// Same navigation as the Benchmark tab's "+" cells, just with no specific
+// dates in mind yet — lands on the date picker empty, ready to fill in.
+function goToTeamsFromEvolution(){
+  goCreateFromBenchmark(evoState.team, evoState.country, null, null);
 }
 
 function exportBenchmarkCsv(){
