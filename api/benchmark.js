@@ -89,10 +89,12 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       // Body is an array of rows to insert/update. Relies on the unique
-      // (search_id, category) constraint: re-adding the same search+category
-      // updates that row instead of creating a duplicate.
+      // (search_id, category, start_date, end_date) constraint: re-adding the
+      // exact same search+category+window updates that row instead of
+      // creating a duplicate — a different window for the same search is a
+      // separate row, which is what lets a team+scope carry multiple periods.
       const rows = Array.isArray(req.body) ? req.body : [req.body];
-      const upstream = await fetch(`${base}?on_conflict=search_id,category`, {
+      const upstream = await fetch(`${base}?on_conflict=search_id,category,start_date,end_date`, {
         method: "POST",
         headers: supabaseHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
         body: JSON.stringify(rows),
@@ -104,11 +106,20 @@ export default async function handler(req, res) {
 
     if (req.method === "DELETE") {
       const searchId = req.query.search_id;
+      const startDate = req.query.start_date;
+      const endDate = req.query.end_date;
       if (!searchId) {
         res.status(400).json({ error: "search_id query parameter is required to delete." });
         return;
       }
-      const upstream = await fetch(`${base}?search_id=eq.${encodeURIComponent(searchId)}`, {
+      // If start_date/end_date are given, scope the delete to that one exact
+      // window — otherwise fall back to removing every period for this
+      // search (the original behavior, kept for "remove this whole team+scope").
+      let deleteUrl = `${base}?search_id=eq.${encodeURIComponent(searchId)}`;
+      if (startDate && endDate) {
+        deleteUrl += `&start_date=eq.${encodeURIComponent(startDate)}&end_date=eq.${encodeURIComponent(endDate)}`;
+      }
+      const upstream = await fetch(deleteUrl, {
         method: "DELETE",
         headers: supabaseHeaders(),
       });
