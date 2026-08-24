@@ -352,6 +352,7 @@
       <div class="tab" data-tab="create">Create historic</div>
       <div class="tab" data-tab="preview">Preview &amp; results</div>
       <div class="tab" data-tab="benchmark">Benchmark</div>
+      <div class="tab" data-tab="evolution">Evolution</div>
     </div>
 
     <!-- TEAMS TAB -->
@@ -369,6 +370,11 @@
     <div class="tabpanel" id="panel-preview">
       <div class="tab-toolbar"><button class="ghost" id="addPreviewCardBtn" type="button">+ Add another search</button></div>
       <div id="previewCardsContainer"></div>
+    </div>
+
+    <!-- EVOLUTION TAB -->
+    <div class="tabpanel" id="panel-evolution">
+      <div id="evolutionRoot"></div>
     </div>
 
     <!-- BENCHMARK TAB -->
@@ -1417,8 +1423,9 @@ function renderTeamSearchDetail(root){
         return;
       }
       const createdIds = (data?.createHistoric?.historics || []).map(h => h.id);
-      msg.innerHTML = `<div class="msg ok">Historic created — tracking status below.</div>`;
+      msg.innerHTML = `<div class="msg ok">Historic created — tracking status in the table above, updating automatically.</div>`;
       trackTeamNewPeriod(searchId, createdIds);
+      document.getElementById("teamBlocksArea").scrollIntoView({ behavior: "smooth", block: "center" });
     }catch(err){
       msg.innerHTML = `<div class="msg error">${err.message}</div>`;
     }
@@ -1593,6 +1600,174 @@ function renderTeamConfirmCreate(root){
 }
 
 document.querySelector('.tab[data-tab="teams"]').addEventListener("click", renderTeamsRoot);
+
+// ================= EVOLUTION TAB =================
+// Pick a team + country, see every X historic that actually exists for that
+// search (live from Pulsar, not just what's been saved to the benchmark
+// table), select any subset, plot as a simple line — no auto-matching, no
+// date tolerance, no per-day toggle. Raw totals only, ordered by start date.
+let evoState = { team: "", country: "", historics: [], selectedIds: new Set() };
+
+function renderEvolutionRoot(){
+  const root = document.getElementById("evolutionRoot");
+  if(!root) return;
+  root.innerHTML = `
+    <div class="section-title">Select a team and country</div>
+    <div class="row">
+      <div class="field">
+        <label>Team</label>
+        <select id="evoTeamSelect">
+          <option value="">— Choose a team —</option>
+          ${TEAMS_TO_BENCHMARK.map(t=>`<option value="${t}" ${evoState.team===t?'selected':''}>${t}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Country</label>
+        <select id="evoCountrySelect"><option value="">— Choose a team first —</option></select>
+      </div>
+    </div>
+    <div id="evoBody"></div>
+  `;
+
+  const teamSelect = document.getElementById("evoTeamSelect");
+  const countrySelect = document.getElementById("evoCountrySelect");
+
+  function refreshCountryOptions(){
+    if(!evoState.team){
+      countrySelect.innerHTML = `<option value="">— Choose a team first —</option>`;
+      countrySelect.disabled = true;
+      return;
+    }
+    const coverage = getTeamCoverage(evoState.team);
+    const countries = Object.keys(coverage);
+    countrySelect.disabled = false;
+    countrySelect.innerHTML = `<option value="">— Choose a country —</option>` +
+      countries.sort((a,b)=>a.localeCompare(b)).map(c=>`<option value="${c}" ${evoState.country===c?'selected':''}>${c}</option>`).join("");
+  }
+  refreshCountryOptions();
+
+  teamSelect.addEventListener("change", e=>{
+    evoState.team = e.target.value;
+    evoState.country = "";
+    evoState.historics = [];
+    evoState.selectedIds = new Set();
+    refreshCountryOptions();
+    renderEvoBody();
+  });
+  countrySelect.addEventListener("change", e=>{
+    evoState.country = e.target.value;
+    evoState.historics = [];
+    evoState.selectedIds = new Set();
+    renderEvoBody();
+    if(evoState.country) loadEvoHistorics();
+  });
+
+  renderEvoBody();
+}
+
+async function loadEvoHistorics(){
+  const body = document.getElementById("evoBody");
+  body.innerHTML = `<div class="msg info">Loading historics…</div>`;
+  const coverage = getTeamCoverage(evoState.team);
+  const entry = coverage[evoState.country];
+  if(!entry){ body.innerHTML = `<div class="msg error">No search found for this team/country.</div>`; return; }
+  try{
+    const { nodes } = await fetchAllHistorics(entry.id, (loaded,total)=>{
+      body.innerHTML = `<div class="msg info">Paging through historics… ${loaded}${total ? " / " + total : ""} loaded</div>`;
+    });
+    evoState.historics = nodes
+      .filter(n => n.category === "X" && isTerminal(n.status))
+      .sort((a,b)=> a.startDate.localeCompare(b.startDate));
+    // Default to everything selected — an immediate full view, deselect to narrow.
+    evoState.selectedIds = new Set(evoState.historics.map(n=>n.id));
+    renderEvoBody();
+  }catch(err){
+    body.innerHTML = `<div class="msg error">${err.message}</div>`;
+  }
+}
+
+function renderEvoBody(){
+  const body = document.getElementById("evoBody");
+  if(!body) return;
+  if(!evoState.team || !evoState.country){
+    body.innerHTML = `<div class="hint" style="margin-top:14px;">Pick a team and country to see its historic windows.</div>`;
+    return;
+  }
+  if(!evoState.historics.length){
+    body.innerHTML = `<div class="msg info" style="margin-top:14px;">No previewed X historics yet for ${evoState.team} — ${evoState.country}.</div>`;
+    return;
+  }
+  const rows = evoState.historics.map(n=>{
+    const checked = evoState.selectedIds.has(n.id);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;font-family:var(--mono);font-size:12.5px;cursor:pointer;">
+      <input type="checkbox" data-evo-id="${n.id}" ${checked?'checked':''} style="width:auto;">
+      <span style="flex:1;">${fmtDate(n.startDate)} → ${fmtDate(n.endDate)}</span>
+      <span style="width:90px;text-align:right;">${(n.previewResult||0).toLocaleString()}</span>
+    </label>`;
+  }).join("");
+
+  body.innerHTML = `
+    <div class="divider"></div>
+    <div class="section-title">${evoState.team} — ${evoState.country}</div>
+    <div id="evoChartArea" style="margin-bottom:16px;"></div>
+    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:4px;padding:4px;">${rows}</div>
+  `;
+  body.querySelectorAll("[data-evo-id]").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const id = Number(cb.dataset.evoId);
+      if(cb.checked) evoState.selectedIds.add(id); else evoState.selectedIds.delete(id);
+      renderEvoChart();
+    });
+  });
+  renderEvoChart();
+}
+
+// Dependency-free SVG line chart — no CDN, no charting library, matching
+// how everything else in this tool is built. Raw totals only, x-position
+// based on each window's actual start date (not just selection order), so
+// gaps and spacing reflect real time.
+function renderEvoChart(){
+  const area = document.getElementById("evoChartArea");
+  if(!area) return;
+  const chosen = evoState.historics.filter(n => evoState.selectedIds.has(n.id));
+  if(!chosen.length){
+    area.innerHTML = `<div class="msg info">Select at least one period below to plot it.</div>`;
+    return;
+  }
+  const W = 640, H = 220, padL = 60, padR = 20, padT = 20, padB = 50;
+  const values = chosen.map(n => Number(n.previewResult) || 0);
+  const maxVal = Math.max(1, ...values);
+  const times = chosen.map(n => new Date(n.startDate).getTime());
+  const minT = Math.min(...times), maxT = Math.max(...times);
+  const timeSpan = Math.max(1, maxT - minT);
+
+  function xAt(t){ return padL + ((t - minT) / timeSpan) * (W - padL - padR); }
+  function yAt(v){ return H - padB - (v / maxVal) * (H - padT - padB); }
+
+  const points = chosen.map((n,i) => ({ x: xAt(times[i]), y: yAt(values[i]), n, v: values[i] }));
+  const pointsStr = points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const y = H - padB - f * (H - padT - padB);
+    const val = Math.round(maxVal * f);
+    return `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--line)" stroke-width="1"/>
+            <text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--muted-2)" font-family="var(--mono)">${val.toLocaleString()}</text>`;
+  }).join("");
+
+  const dots = points.map(p => `
+    <circle cx="${p.x}" cy="${p.y}" r="4" fill="var(--accent)"/>
+    <text x="${p.x}" y="${p.y-10}" text-anchor="middle" font-size="10" fill="var(--text)" font-family="var(--mono)">${p.v.toLocaleString()}</text>
+    <text x="${p.x}" y="${H-padB+16}" text-anchor="middle" font-size="9.5" fill="var(--muted-2)" font-family="var(--mono)" transform="rotate(20 ${p.x} ${H-padB+16})">${fmtDate(p.n.startDate)}</text>
+  `).join("");
+
+  area.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
+    ${gridLines}
+    <polyline points="${pointsStr}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
+
+document.querySelector('.tab[data-tab="evolution"]').addEventListener("click", renderEvolutionRoot);
 
 // ================= CREATE CARDS =================
 let createCardCounter = 0;
@@ -2059,7 +2234,6 @@ function wirePreviewCard(root){
 let benchmarkRows = [];
 let benchmarkPeriod = null;
 let activeTrendCell = null;
-let trendStepsBack = 1;
 
 async function loadBenchmarkGrid(){
   const statusEl = document.getElementById("benchmarkStatus");
@@ -2085,17 +2259,6 @@ async function loadBenchmarkGrid(){
 }
 
 function periodKeyOf(r){ return r.start_date + "_" + r.end_date; }
-
-function subtractYears(dateISO, n){
-  const d = new Date(dateISO+"T00:00:00Z");
-  d.setUTCFullYear(d.getUTCFullYear() - n);
-  return d.toISOString().slice(0,10);
-}
-// Same calendar dates, N years earlier — confirmed as the right rule over an
-// earlier length-based calculation that was tried and was wrong.
-function comparisonWindowAtStep(startISO, endISO, stepsBack){
-  return { start: subtractYears(startISO, stepsBack), end: subtractYears(endISO, stepsBack) };
-}
 
 let heatZoom = null; // null = global shading; {type:'team',value} or {type:'scope',value} to zoom
 
@@ -2196,10 +2359,12 @@ function renderBenchmarkGrid(){
       renderBenchmarkGrid();
     });
   });
+  area.querySelectorAll("td[data-missing]").forEach(td=>{
+    td.addEventListener("click", ()=> goCreateFromBenchmark(td.dataset.team, td.dataset.scope, curStart, curEnd));
+  });
   area.querySelectorAll("td[data-team]:not([data-missing])").forEach(td=>{
     td.addEventListener("click", ()=>{
       activeTrendCell = { team: td.dataset.team, scope: td.dataset.scope };
-      trendStepsBack = 1;
       renderBenchmarkGrid();
       renderBenchmarkTrend();
     });
@@ -2211,7 +2376,7 @@ function renderBenchmarkTrend(){
   const panel = document.getElementById("benchmarkTrendPanel");
   if(!panel) return;
   if(!activeTrendCell){
-    panel.innerHTML = `<div class="hint">Click any filled cell to see it compared against the same dates in prior years. Click a "+" to jump to creating that missing combination in the Teams tab.</div>`;
+    panel.innerHTML = `<div class="hint">Click any filled cell for details. Click a "+" to jump to creating that missing combination in the Teams tab.</div>`;
     return;
   }
   const { team, scope } = activeTrendCell;
@@ -2220,35 +2385,15 @@ function renderBenchmarkTrend(){
   if(!current){ panel.innerHTML = ""; return; }
   const currentVal = Number(current.preview_result) || 0;
 
-  let html = `<div class="divider"></div><div class="section-title">${team} · ${scope} — same dates, year over year</div>`;
-  html += `<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;"><tbody>`;
-  html += `<tr style="border-bottom:1px solid var(--line);"><td style="padding:6px 10px;">${fmtDate(curStart)} → ${fmtDate(curEnd)} <span style="color:var(--muted-2);">(current)</span></td><td style="padding:6px 10px;text-align:right;">${currentVal.toLocaleString()}</td><td style="padding:6px 10px;width:160px;"><button class="ghost" id="removeCurrentBenchmarkBtn" style="font-size:11px;padding:3px 8px;">Remove this period</button></td></tr>`;
-
-  for(let step=1; step<=trendStepsBack; step++){
-    const win = comparisonWindowAtStep(curStart, curEnd, step);
-    const match = benchmarkRows.find(r=>r.team===team && r.scope===scope && r.start_date===win.start && r.end_date===win.end);
-    if(match){
-      const matchVal = Number(match.preview_result) || 0;
-      const pct = ((currentVal - matchVal) / matchVal * 100);
-      const up = pct >= 0;
-      const color = up ? "var(--done)" : "var(--error)";
-      const arrow = up ? "▲" : "▼";
-      html += `<tr style="border-bottom:1px solid var(--line);"><td style="padding:6px 10px;">${fmtDate(win.start)} → ${fmtDate(win.end)}</td><td style="padding:6px 10px;text-align:right;">${matchVal.toLocaleString()}</td><td style="padding:6px 10px;color:${color};font-size:12px;">current is ${arrow} ${Math.abs(pct).toFixed(1)}% vs this period</td></tr>`;
-    } else {
-      html += `<tr style="border-bottom:1px solid var(--line);"><td style="padding:6px 10px;color:var(--muted-2);">${fmtDate(win.start)} → ${fmtDate(win.end)} — not yet benchmarked</td><td style="padding:6px 10px;text-align:right;">—</td><td style="padding:6px 10px;"><button class="ghost" data-request-start="${win.start}" data-request-end="${win.end}" style="font-size:11px;padding:3px 8px;">+ Request</button></td></tr>`;
-    }
-  }
-  html += `</tbody></table>`;
-  html += `<button class="ghost" id="addAnotherStepBenchmarkBtn" style="margin-top:8px;font-size:12px;">+ Add another comparison period</button>`;
-  panel.innerHTML = html;
-
-  panel.querySelectorAll("[data-request-start]").forEach(btn=>{
-    btn.addEventListener("click", ()=> goCreateFromBenchmark(team, scope, btn.dataset.requestStart, btn.dataset.requestEnd));
-  });
-  document.getElementById("addAnotherStepBenchmarkBtn").addEventListener("click", ()=>{
-    trendStepsBack += 1;
-    renderBenchmarkTrend();
-  });
+  panel.innerHTML = `
+    <div class="divider"></div>
+    <div class="section-title">${team} · ${scope}</div>
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;">
+      <tbody>
+        <tr><td style="padding:6px 10px;">${fmtDate(curStart)} → ${fmtDate(curEnd)}</td><td style="padding:6px 10px;text-align:right;">${currentVal.toLocaleString()}</td><td style="padding:6px 10px;width:160px;"><button class="ghost" id="removeCurrentBenchmarkBtn" style="font-size:11px;padding:3px 8px;">Remove this period</button></td></tr>
+      </tbody>
+    </table>
+  `;
   document.getElementById("removeCurrentBenchmarkBtn").addEventListener("click", ()=>{
     removeBenchmarkWindow(current.search_id, curStart, curEnd);
   });
@@ -2311,6 +2456,7 @@ document.getElementById("addPreviewCardBtn").addEventListener("click", addPrevie
 addCreateCard();
 addPreviewCard();
 renderTeamsRoot();
+renderEvolutionRoot();
 </script>
 </body>
 </html>
