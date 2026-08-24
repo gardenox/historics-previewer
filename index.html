@@ -1370,8 +1370,11 @@ function renderTeamLookupResults(){
   const box = document.getElementById("teamLookupResults");
   if(!team){ box.innerHTML = ""; return; }
   const coverage = getTeamCoverage(team);
+  const existing = COUNTRY_LIST.filter(c => !!coverage[c]).sort((a,b)=>a.localeCompare(b));
+  const missing = COUNTRY_LIST.filter(c => !coverage[c]).sort((a,b)=>a.localeCompare(b));
+  const ordered = [...existing, ...missing];
   let html = `<div class="divider"></div><div class="section-title">${team} — country coverage</div><div class="grid-countries">`;
-  COUNTRY_LIST.forEach(c=>{
+  ordered.forEach(c=>{
     const exists = !!coverage[c];
     html += `<div class="country-tile" data-country="${c}">
       <span>${c}</span>
@@ -2343,6 +2346,7 @@ function periodKeyOf(r){ return r.start_date + "_" + r.end_date; }
 let heatZoom = null; // null = global shading; {type:'team',value} or {type:'scope',value} to zoom
 
 let hiddenScopes = new Set(); // countries explicitly hidden from the grid — empty means show all
+let scopePanelOpen = false; // tracked separately since the panel gets rebuilt on every checkbox click
 
 function renderBenchmarkGrid(){
   const area = document.getElementById("benchmarkGridArea");
@@ -2377,8 +2381,6 @@ function renderBenchmarkGrid(){
 
   const periodOptions = periods.map(p=>`<option value="${p.key}" ${p.key===benchmarkPeriod?'selected':''}>${fmtDate(p.start)} → ${fmtDate(p.end)}</option>`).join("");
   const zoomLabel = heatZoom ? (heatZoom.type==='team' ? `Zoomed: ${heatZoom.value} (its own countries, relative to each other)` : `Zoomed: ${heatZoom.value} (all teams, relative to each other here)`) : null;
-  const visibleCount = scopes.length;
-  const scopeToggleLabel = hiddenScopes.size === 0 ? `All ${allScopes.length} countries shown` : `${visibleCount} of ${allScopes.length} countries shown`;
 
   const headCells = scopes.map(s=>{
     const isZoomed = heatZoom && heatZoom.type==='scope' && heatZoom.value===s;
@@ -2419,7 +2421,7 @@ function renderBenchmarkGrid(){
       <div class="field" style="max-width:280px;">
         <label>Countries shown</label>
         <div class="multiselect" id="scopeVisPicker">
-          <button type="button" class="ms-toggle" id="scopeVisToggle">${scopeToggleLabel}</button>
+          <button type="button" class="ms-toggle" id="scopeVisToggle">Select countries</button>
           <div class="ms-panel" id="scopeVisPanel"></div>
         </div>
       </div>
@@ -2441,25 +2443,52 @@ function renderBenchmarkGrid(){
   });
 
   const scopeVisPanel = document.getElementById("scopeVisPanel");
-  scopeVisPanel.innerHTML = allScopes.map(s => `
-    <label class="ms-item">
-      <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"}>
-      <span>${s}</span>
-    </label>
-  `).join("");
-  scopeVisPanel.querySelectorAll("input[type=checkbox]").forEach(cb=>{
-    cb.addEventListener("change", ()=>{
-      if(cb.checked) hiddenScopes.delete(cb.value); else hiddenScopes.add(cb.value);
-      renderBenchmarkGrid();
+  scopeVisPanel.innerHTML = `
+    <div style="display:flex;gap:8px;padding:4px 8px 8px;border-bottom:1px solid var(--line);margin-bottom:4px;">
+      <button type="button" class="ghost" id="scopeSelectAllBtn" style="font-size:11px;padding:3px 8px;">Select all</button>
+      <button type="button" class="ghost" id="scopeSelectNoneBtn" style="font-size:11px;padding:3px 8px;">Unselect all</button>
+    </div>
+    ${allScopes.map(s => `
+      <label class="ms-item">
+        <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"}>
+        <span>${s}</span>
+      </label>
+    `).join("")}
+  `;
+  if(scopePanelOpen) scopeVisPanel.classList.add("open");
+
+  function wireScopeCheckboxes(){
+    scopeVisPanel.querySelectorAll("input[type=checkbox]").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        if(cb.checked) hiddenScopes.delete(cb.value); else hiddenScopes.add(cb.value);
+        renderBenchmarkGrid();
+      });
     });
+  }
+  wireScopeCheckboxes();
+
+  document.getElementById("scopeSelectAllBtn").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    hiddenScopes.clear();
+    renderBenchmarkGrid();
   });
+  document.getElementById("scopeSelectNoneBtn").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    allScopes.forEach(s => hiddenScopes.add(s));
+    renderBenchmarkGrid();
+  });
+
   document.getElementById("scopeVisToggle").addEventListener("click", (e)=>{
     e.stopPropagation();
-    scopeVisPanel.classList.toggle("open");
+    scopePanelOpen = !scopePanelOpen;
+    scopeVisPanel.classList.toggle("open", scopePanelOpen);
   });
   document.addEventListener("click", (e)=>{
     const picker = document.getElementById("scopeVisPicker");
-    if(picker && !picker.contains(e.target)) scopeVisPanel.classList.remove("open");
+    if(picker && !picker.contains(e.target)){
+      scopeVisPanel.classList.remove("open");
+      scopePanelOpen = false;
+    }
   });
 
   area.querySelectorAll("[data-team-header]").forEach(el=>{
