@@ -500,29 +500,9 @@
 
     <div class="pollStatus"></div>
     <div class="previewMsg"></div>
-    <div class="hint" style="margin-top:8px;">Results below are X only — other data sources that exist on a search aren't shown here.</div>
+    <div class="hint" style="margin-top:8px;">Results below are X only — other data sources that exist on a search aren't shown here. "Add to benchmark" appears per row once results settle.</div>
 
     <div class="resultsArea"></div>
-
-    <div class="benchmarkAddArea" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
-      <button class="ghost addToBenchmarkBtn" type="button">Add to benchmark</button>
-      <div class="benchmarkForm" style="display:none;margin-top:10px;">
-        <div class="row">
-          <div class="field">
-            <label>Team / entity</label>
-            <input type="text" class="bmTeam" placeholder="e.g. Liverpool" autocomplete="off">
-          </div>
-          <div class="field">
-            <label>Scope</label>
-            <input type="text" class="bmScope" placeholder="e.g. Global or UK" autocomplete="off">
-          </div>
-          <div class="field" style="flex:0 0 auto;align-self:end;">
-            <button class="solid bmSaveBtn" type="button">Save</button>
-          </div>
-        </div>
-      </div>
-      <div class="benchmarkAddMsg"></div>
-    </div>
   </div>
 </template>
 
@@ -748,9 +728,12 @@ document.getElementById("connectBtn").addEventListener("click", async ()=>{
   document.getElementById("connLabel").textContent = "connected";
   gateEl.classList.add("connected");
   msgEl.innerHTML = `<div class="msg ok">Token stored for this session. Calling ${appState.endpoint}</div>`;
-  document.getElementById("mainArea").style.display = "block";
+  // Load both searches and benchmark data BEFORE the main area appears, so
+  // it's impossible to click into Teams and check a country before the
+  // benchmark cross-reference data has actually arrived.
   await loadSearchesList();
   await loadBenchmarkGrid();
+  document.getElementById("mainArea").style.display = "block";
 });
 
 document.getElementById("refreshSearchesBtn").addEventListener("click", loadSearchesList);
@@ -968,7 +951,21 @@ function createSearchPicker(root){
 
 // ---------- Shared results renderer ----------
 // Takes a DOM element directly (not an ID) so it works for repeated cards.
-function renderResults(area, nodes){
+// Parses "Team - Country" back into its parts using the known team list —
+// this is what lets "Add to benchmark" work with zero typing for any search
+// that follows the convention.
+function parseTeamCountryFromSearchName(name){
+  if(!name) return null;
+  for(const team of TEAMS_TO_BENCHMARK){
+    const prefix = team + " - ";
+    if(name.startsWith(prefix)){
+      return { team, country: name.slice(prefix.length) };
+    }
+  }
+  return null;
+}
+
+function renderResults(area, nodes, context){
   if(!nodes.length){
     area.innerHTML = `<div class="msg info">No rows yet.</div>`;
     return;
@@ -1071,16 +1068,28 @@ function renderResults(area, nodes){
       </div>
     </div>
     <table class="breakdown">
-      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Window</th><th>Status</th></tr></thead>
+      <thead><tr><th>Category</th><th class="num">Result</th><th class="num">% of total*</th><th>Window</th><th>Status</th><th>Benchmark</th></tr></thead>
       <tbody>`;
-  rows.forEach(r=>{
+  const parsed = context ? parseTeamCountryFromSearchName(context.searchName) : null;
+  rows.forEach((r,i)=>{
     const pct = (totalDone && r.hasValue) ? (r.sum / totalDone * 100) : null;
+    let actionHtml = "";
+    if(r.cat === "X" && r.hasValue && context && context.searchId){
+      if(!parsed){
+        actionHtml = `<span style="color:var(--muted-2);font-size:10.5px;" title="This search's name doesn't follow the 'Team - Country' convention">— use Teams tab</span>`;
+      } else if(isAlreadyInBenchmark(context.searchId, "X", r.startDate, r.endDate)){
+        actionHtml = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
+      } else {
+        actionHtml = `<button class="ghost bm-row-add" data-row-index="${i}" style="font-size:11px;padding:3px 8px;">Add to benchmark</button>`;
+      }
+    }
     html += `<tr>
       <td>${categoryLabel(r.cat)}</td>
       <td class="num">${r.hasValue ? r.sum.toLocaleString() : "—"}</td>
       <td class="num">${pct != null ? pct.toFixed(1) + "%" : "—"}</td>
       <td>${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}</td>
       <td><span class="badge ${r.statusClass}">${r.statusLabel}</span></td>
+      <td>${actionHtml}</td>
     </tr>`;
   });
   html += `</tbody></table>`;
@@ -1091,6 +1100,42 @@ function renderResults(area, nodes){
     html += `<div class="hint">* rows here cover different date windows — each row's own Window column is its exact, un-merged range.</div>`;
   }
   area.innerHTML = html;
+
+  if(context && context.searchId && parsed){
+    area.querySelectorAll(".bm-row-add").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const r = rows[Number(btn.dataset.rowIndex)];
+        btn.disabled = true;
+        btn.textContent = "Adding…";
+        const row = {
+          search_id: context.searchId,
+          search_name: context.searchName,
+          team: parsed.team,
+          scope: parsed.country,
+          category: "X",
+          start_date: fmtDateISO(r.startDate),
+          end_date: fmtDateISO(r.endDate),
+          preview_result: r.sum
+        };
+        try{
+          const res = await fetch("/api/benchmark", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify([row])
+          });
+          if(!res.ok){
+            const t = await res.text();
+            throw new Error(`HTTP ${res.status}: ${t.slice(0,200)}`);
+          }
+          await loadBenchmarkGrid();
+          btn.outerHTML = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
+        }catch(err){
+          btn.disabled = false;
+          btn.textContent = "Retry add";
+        }
+      });
+    });
+  }
 }
 
 // ================= TEAMS TAB =================
@@ -2033,7 +2078,7 @@ function wireCreateCard(root){
         createMsg.innerHTML = `<div class="msg ok">Create request accepted for ${categories.map(categoryLabel).join(", ")} — ${createdIds.length} historic ID${createdIds.length===1?"":"s"} returned. Tracking status below.</div>`;
         createFollow.style.display = "block";
         if(cardPollTimer) cardPollTimer.stop();
-        cardPollTimer = trackNewHistorics(createBoard, Number(searchId), categories, startISO, endISO, createdIds);
+        cardPollTimer = trackNewHistorics(createBoard, Number(searchId), categories, startISO, endISO, createdIds, searchPicker.getSearchName());
       }
     }catch(err){
       createMsg.innerHTML = `<div class="msg error">${err.message}</div>`;
@@ -2056,7 +2101,7 @@ function wireCreateCard(root){
   });
 }
 
-function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, createdIds){
+function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, createdIds, searchName){
   let ticks = 0;
   let stopped = false;
   let timerHandle = null;
@@ -2102,7 +2147,7 @@ function trackNewHistorics(boardEl, searchId, categories, startISO, endISO, crea
         n.endDate === endISO
       );
     }
-    renderResults(boardEl, matched);
+    renderResults(boardEl, matched, { searchId, searchName });
 
     const allDone = matched.length === categories.length && matched.every(n => isSettled(n.status));
 
@@ -2153,13 +2198,6 @@ function wirePreviewCard(root){
   const previewMsgEl = root.querySelector(".previewMsg");
   const resultsAreaEl = root.querySelector(".resultsArea");
   const removeCardBtn = root.querySelector(".removeCardBtn");
-  const benchmarkAddArea = root.querySelector(".benchmarkAddArea");
-  const addToBenchmarkBtn = root.querySelector(".addToBenchmarkBtn");
-  const benchmarkForm = root.querySelector(".benchmarkForm");
-  const bmTeamInput = root.querySelector(".bmTeam");
-  const bmScopeInput = root.querySelector(".bmScope");
-  const bmSaveBtn = root.querySelector(".bmSaveBtn");
-  const benchmarkAddMsg = root.querySelector(".benchmarkAddMsg");
 
   let pollTimer = null;
   let pollTicks = 0;
@@ -2168,7 +2206,7 @@ function wirePreviewCard(root){
   let currentSearchId = null;
 
   function refreshResultsView(){
-    renderResults(resultsAreaEl, currentPreviewNodes);
+    renderResults(resultsAreaEl, currentPreviewNodes, { searchId: currentSearchId, searchName: searchPicker.getSearchName() });
   }
 
   function stopPolling(){
@@ -2207,10 +2245,6 @@ function wirePreviewCard(root){
     const nodes = allNodes.filter(n => n.category === "X");
     currentPreviewNodes = nodes;
 
-    if(nodes.length){
-      benchmarkAddArea.style.display = "block";
-    }
-
     refreshResultsView();
 
     const pending = nodes.filter(n => !isSettled(n.status));
@@ -2246,71 +2280,6 @@ function wirePreviewCard(root){
     pollStartedAt = Date.now();
     stopPollBtn.style.display = "inline-block";
     pollPreview();
-  });
-
-  addToBenchmarkBtn.addEventListener("click", ()=>{
-    benchmarkForm.style.display = benchmarkForm.style.display === "none" ? "block" : "none";
-  });
-
-  bmSaveBtn.addEventListener("click", async ()=>{
-    const team = bmTeamInput.value.trim();
-    const scope = bmScopeInput.value.trim();
-    if(!team || !scope){
-      benchmarkAddMsg.innerHTML = `<div class="msg error">Both team and scope are required.</div>`;
-      return;
-    }
-    if(!currentSearchId || !currentPreviewNodes.length){
-      benchmarkAddMsg.innerHTML = `<div class="msg error">Fetch results first.</div>`;
-      return;
-    }
-
-    const groups = {};
-    currentPreviewNodes.forEach(n=>{
-      if(!isTerminal(n.status)) return; // only benchmark settled, successful rows
-      if(n.category !== "X") return; // this tool is X-only throughout — never post other sources
-      (groups[n.category] = groups[n.category] || []).push(n);
-    });
-    const rows = Object.entries(groups).map(([category, rs])=>{
-      const minStart = rs.reduce((m,r)=> (!m || r.startDate < m) ? r.startDate : m, null);
-      const maxEnd = rs.reduce((m,r)=> (!m || r.endDate > m) ? r.endDate : m, null);
-      const sum = rs.reduce((s,r)=> s + (Number(r.previewResult) || 0), 0);
-      return {
-        search_id: currentSearchId,
-        search_name: searchPicker.getSearchName() || `Search ${currentSearchId}`,
-        team, scope, category,
-        start_date: fmtDate(minStart),
-        end_date: fmtDate(maxEnd),
-        preview_result: sum
-      };
-    });
-
-    if(!rows.length){
-      benchmarkAddMsg.innerHTML = `<div class="msg error">No fully previewed categories to add yet — wait for at least one source to finish.</div>`;
-      return;
-    }
-
-    bmSaveBtn.disabled = true;
-    benchmarkAddMsg.innerHTML = `<div class="msg info">Saving…</div>`;
-    try{
-      const res = await fetch("/api/benchmark", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rows)
-      });
-      if(!res.ok){
-        const errText = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errText.slice(0,200)}`);
-      }
-      benchmarkAddMsg.innerHTML = `<div class="msg ok">Added ${team} · ${scope} (${rows.length} source${rows.length===1?"":"s"}) to the benchmark grid.</div>`;
-      benchmarkForm.style.display = "none";
-      bmScopeInput.value = "";
-      // team is left in place deliberately — you're often adding several
-      // scopes/countries for the same team back to back
-    }catch(err){
-      benchmarkAddMsg.innerHTML = `<div class="msg error">${err.message}</div>`;
-    }finally{
-      bmSaveBtn.disabled = false;
-    }
   });
 
   removeCardBtn.addEventListener("click", ()=>{
