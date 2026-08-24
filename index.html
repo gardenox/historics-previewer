@@ -258,6 +258,18 @@
   table.breakdown tr:last-child td{border-bottom:none;}
   table.breakdown td.num,table.breakdown th.num{text-align:right;}
 
+  table.bm-grid{border-collapse:collapse;font-family:var(--mono);font-size:12.5px;white-space:nowrap;}
+  table.bm-grid th, table.bm-grid td{padding:8px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);}
+  table.bm-grid th:last-child, table.bm-grid td:last-child{border-right:none;}
+  table.bm-grid td.num, table.bm-grid th.num{text-align:right;min-width:100px;}
+  table.bm-grid thead th{border-bottom:1px solid var(--line);color:var(--muted-2);font-size:10.5px;text-transform:uppercase;font-weight:400;}
+  table.bm-grid th:first-child, table.bm-grid td:first-child{
+    position:sticky;left:0;background:var(--panel);z-index:2;min-width:150px;text-align:left;
+  }
+  table.bm-grid tbody tr:hover td:first-child{background:var(--panel-2);}
+  .heat-toggle{cursor:pointer;}
+  .heat-toggle:hover{color:var(--accent);}
+
   .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);}
   .filters .field{margin-bottom:0;flex:1;min-width:140px;}
 
@@ -1991,6 +2003,7 @@ function wirePreviewCard(root){
     const groups = {};
     currentPreviewNodes.forEach(n=>{
       if(!isTerminal(n.status)) return; // only benchmark settled, successful rows
+      if(n.category !== "X") return; // this tool is X-only throughout — never post other sources
       (groups[n.category] = groups[n.category] || []).push(n);
     });
     const rows = Object.entries(groups).map(([category, rs])=>{
@@ -2058,7 +2071,10 @@ async function loadBenchmarkGrid(){
       const errText = await res.text();
       throw new Error(`HTTP ${res.status}: ${errText.slice(0,200)}`);
     }
-    benchmarkRows = await res.json();
+    // Defensive filter: the table can theoretically hold non-X rows (old
+    // data from before this was X-only, or any future path that isn't
+    // careful about it) — the grid and trend panel should never show them.
+    benchmarkRows = (await res.json()).filter(r => r.category === "X");
     const teamCount = new Set(benchmarkRows.map(r=>r.team)).size;
     statusEl.innerHTML = `<div class="hint">Loaded ${benchmarkRows.length} row${benchmarkRows.length===1?"":"s"} across ${teamCount} team${teamCount===1?"":"s"} from Supabase.</div>`;
     renderBenchmarkGrid();
@@ -2081,6 +2097,8 @@ function comparisonWindowAtStep(startISO, endISO, stepsBack){
   return { start: subtractYears(startISO, stepsBack), end: subtractYears(endISO, stepsBack) };
 }
 
+let heatZoom = null; // null = global shading; {type:'team',value} or {type:'scope',value} to zoom
+
 function renderBenchmarkGrid(){
   const area = document.getElementById("benchmarkGridArea");
   if(!benchmarkRows.length){
@@ -2097,23 +2115,48 @@ function renderBenchmarkGrid(){
   const scopes = [...new Set(benchmarkRows.map(r=>r.scope))];
   const [curStart, curEnd] = benchmarkPeriod.split("_");
   const rowsForPeriod = benchmarkRows.filter(r=> r.start_date===curStart && r.end_date===curEnd);
-  const maxVal = Math.max(1, ...rowsForPeriod.map(r=>Number(r.preview_result)||0));
+  const globalMax = Math.max(1, ...rowsForPeriod.map(r=>Number(r.preview_result)||0));
+
+  // Per-row and per-column maxes, computed once, used only when zoomed —
+  // this is what lets "which country matters most to this one team" or
+  // "which team is strongest in this one country" be answered at all, since
+  // the global scale flattens that out by design.
+  const rowMax = {}, colMax = {};
+  teams.forEach(t=>{
+    rowMax[t] = Math.max(1, ...rowsForPeriod.filter(r=>r.team===t).map(r=>Number(r.preview_result)||0));
+  });
+  scopes.forEach(s=>{
+    colMax[s] = Math.max(1, ...rowsForPeriod.filter(r=>r.scope===s).map(r=>Number(r.preview_result)||0));
+  });
 
   const periodOptions = periods.map(p=>`<option value="${p.key}" ${p.key===benchmarkPeriod?'selected':''}>${fmtDate(p.start)} → ${fmtDate(p.end)}</option>`).join("");
-  const headCells = scopes.map(s=>`<th class="num">${s}</th>`).join("");
+  const zoomLabel = heatZoom ? (heatZoom.type==='team' ? `Zoomed: ${heatZoom.value} (its own countries, relative to each other)` : `Zoomed: ${heatZoom.value} (all teams, relative to each other here)`) : null;
+
+  const headCells = scopes.map(s=>{
+    const isZoomed = heatZoom && heatZoom.type==='scope' && heatZoom.value===s;
+    return `<th class="num heat-toggle" data-scope-header="${s}" style="${isZoomed?'color:var(--accent);':''}">${s}</th>`;
+  }).join("");
 
   let bodyRows = "";
   teams.forEach(t=>{
-    let cells = `<td>${t}</td>`;
+    const isRowZoomed = heatZoom && heatZoom.type==='team' && heatZoom.value===t;
+    let cells = `<td class="heat-toggle" data-team-header="${t}" style="${isRowZoomed?'color:var(--accent);':''}">${t}</td>`;
     scopes.forEach(s=>{
       const match = rowsForPeriod.find(r=>r.team===t && r.scope===s);
       if(match){
         const val = Number(match.preview_result)||0;
-        const alpha = (0.08 + (val/maxVal)*0.30).toFixed(2);
+        let alpha;
+        if(heatZoom && heatZoom.type==='team'){
+          alpha = heatZoom.value===t ? (0.08 + (val/rowMax[t])*0.30) : 0.03;
+        } else if(heatZoom && heatZoom.type==='scope'){
+          alpha = heatZoom.value===s ? (0.08 + (val/colMax[s])*0.30) : 0.03;
+        } else {
+          alpha = 0.08 + (val/globalMax)*0.30;
+        }
         const isActive = activeTrendCell && activeTrendCell.team===t && activeTrendCell.scope===s;
-        cells += `<td class="num" data-team="${t}" data-scope="${s}" style="cursor:pointer;background:rgba(29,158,117,${alpha});${isActive?'outline:2px solid var(--accent);outline-offset:-2px;':''}">${val.toLocaleString()}</td>`;
+        cells += `<td class="num" data-team="${t}" data-scope="${s}" style="cursor:pointer;background:rgba(29,158,117,${alpha.toFixed(2)});${isActive?'outline:2px solid var(--accent);outline-offset:-2px;':''}">${val.toLocaleString()}</td>`;
       } else {
-        cells += `<td class="num" data-team="${t}" data-scope="${s}" data-missing="1" style="text-align:right;"><button class="ghost" style="font-size:11px;padding:2px 8px;">+</button></td>`;
+        cells += `<td class="num" data-team="${t}" data-scope="${s}" data-missing="1"><button class="ghost" style="font-size:11px;padding:2px 8px;">+</button></td>`;
       }
     });
     bodyRows += `<tr>${cells}</tr>`;
@@ -2124,10 +2167,13 @@ function renderBenchmarkGrid(){
       <label>Period</label>
       <select id="periodSel">${periodOptions}</select>
     </div>
-    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;margin-top:10px;">
-      <thead><tr style="border-bottom:1px solid var(--line);"><th style="text-align:left;padding:7px 10px;color:var(--muted-2);font-size:10.5px;text-transform:uppercase;"></th>${headCells}</tr></thead>
-      <tbody>${bodyRows}</tbody>
-    </table>
+    <div class="hint" style="margin-bottom:8px;">Click a team name or a country header to shade that row/column by its own values instead of the whole grid's. ${zoomLabel ? `<span style="color:var(--accent);">${zoomLabel}</span> — click it again to return to the overall view.` : ''}</div>
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:4px;">
+      <table class="bm-grid">
+        <thead><tr><th></th>${headCells}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
     <div id="benchmarkTrendPanel" style="margin-top:18px;"></div>
   `;
 
@@ -2136,8 +2182,19 @@ function renderBenchmarkGrid(){
     activeTrendCell = null;
     renderBenchmarkGrid();
   });
-  area.querySelectorAll("td[data-missing]").forEach(td=>{
-    td.addEventListener("click", ()=> goCreateFromBenchmark(td.dataset.team, td.dataset.scope, curStart, curEnd));
+  area.querySelectorAll("[data-team-header]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const t = el.dataset.teamHeader;
+      heatZoom = (heatZoom && heatZoom.type==='team' && heatZoom.value===t) ? null : { type:'team', value:t };
+      renderBenchmarkGrid();
+    });
+  });
+  area.querySelectorAll("[data-scope-header]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const s = el.dataset.scopeHeader;
+      heatZoom = (heatZoom && heatZoom.type==='scope' && heatZoom.value===s) ? null : { type:'scope', value:s };
+      renderBenchmarkGrid();
+    });
   });
   area.querySelectorAll("td[data-team]:not([data-missing])").forEach(td=>{
     td.addEventListener("click", ()=>{
