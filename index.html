@@ -1185,7 +1185,7 @@ function renderResults(area, nodes, context){
 
 // ================= TEAMS TAB =================
 // REPLACE with your real fixed list of teams to always benchmark.
-const TEAMS_TO_BENCHMARK = ["Man City", "Arsenal", "Tottenham", "Liverpool", "Real Madrid", "Barcelona", "Chelsea", "Borussia Dortmund", "Atletico Madrid", "Juventus", "Inter Milan", "PSG", "Bayern"];
+const TEAMS_TO_BENCHMARK = ["Man City", "Man United", "Arsenal", "Tottenham", "Liverpool", "Real Madrid", "Barcelona", "Chelsea", "Borussia Dortmund", "Atletico Madrid", "Juventus", "Inter Milan", "PSG", "Bayern"];
 
 // Real CountryEnum values, extracted directly from your schema introspection
 // (203 total minus UNKNOWN/NOT_ANALYZED = 201 real countries, plus "Global").
@@ -2426,8 +2426,30 @@ function periodKeyOf(r){ return r.start_date + "_" + r.end_date; }
 
 let heatZoom = null; // null = global shading; {type:'team',value} or {type:'scope',value} to zoom
 
+const REGIONS = {
+  "APAC": ["China", "Japan", "South Korea", "North Korea", "Taiwan", "Mongolia", "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Maldives", "Afghanistan", "Indonesia", "Philippines", "Vietnam", "Thailand", "Myanmar", "Malaysia", "Cambodia", "Laos", "Singapore", "Australia", "New Zealand", "Papua New Guinea", "Fiji", "Samoa", "Tonga"],
+  "ANZ": ["Australia", "New Zealand"],
+  "EMEA": ["Albania", "Andorra", "Austria", "Belarus", "Belgium", "Bosnia and Herzegovina", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Italy", "Latvia", "Liechtenstein", "Lithuania", "Luxembourg", "Malta", "Moldova", "Monaco", "Montenegro", "Netherlands", "North Macedonia", "Norway", "Poland", "Portugal", "Romania", "Russia", "San Marino", "Serbia", "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland", "Ukraine", "United Kingdom", "Turkey", "Georgia", "Armenia", "Azerbaijan", "United Arab Emirates", "Saudi Arabia", "Qatar", "Kuwait", "Bahrain", "Oman", "Israel", "Jordan", "Lebanon", "Iraq", "Iran", "Syria", "Yemen", "Algeria", "Angola", "Benin", "Botswana", "Burkina Faso", "Burundi", "Cabo Verde", "Cameroon", "Central African Republic", "Chad", "Comoros", "Congo", "Congo (DRC)", "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea", "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana", "Guinea", "Guinea-Bissau", "Côte d'Ivoire", "Kenya", "Lesotho", "Liberia", "Libya", "Madagascar", "Malawi", "Mali", "Mauritania", "Mauritius", "Morocco", "Mozambique", "Namibia", "Niger", "Nigeria", "Rwanda", "Senegal", "Seychelles", "Sierra Leone", "Somalia", "South Africa", "Sudan", "Tanzania", "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"],
+  "LATAM": ["Brazil", "Argentina", "Colombia", "Peru", "Chile", "Venezuela", "Ecuador", "Bolivia", "Paraguay", "Uruguay", "Guyana", "Suriname", "Mexico", "Guatemala", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama", "Cuba", "Dominican Republic", "Haiti"],
+  "NORAM": ["United States", "Canada"],
+  "AMER": ["United States", "Canada", "Brazil", "Argentina", "Colombia", "Peru", "Chile", "Venezuela", "Ecuador", "Bolivia", "Paraguay", "Uruguay", "Guyana", "Suriname", "Mexico", "Guatemala", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama", "Cuba", "Dominican Republic", "Haiti"],
+  "MENA": ["Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait", "Bahrain", "Oman", "Iraq", "Iran", "Israel", "Jordan", "Lebanon", "Syria", "Yemen", "Palestine", "Egypt", "Algeria", "Morocco", "Tunisia", "Libya", "Sudan", "Mauritania"],
+  "SEA": ["Indonesia", "Philippines", "Vietnam", "Thailand", "Myanmar", "Malaysia", "Cambodia", "Laos", "Singapore"],
+  "DACH": ["Germany", "Austria", "Switzerland"],
+  "East Asia": ["China", "Japan", "South Korea", "North Korea", "Taiwan", "Mongolia"],
+  "South Asia": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Maldives", "Afghanistan"],
+  "Oceania": ["Australia", "New Zealand", "Papua New Guinea", "Fiji", "Samoa", "Tonga"],
+  "Europe": ["Albania", "Andorra", "Austria", "Belarus", "Belgium", "Bosnia and Herzegovina", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Iceland", "Ireland", "Italy", "Latvia", "Liechtenstein", "Lithuania", "Luxembourg", "Malta", "Moldova", "Monaco", "Montenegro", "Netherlands", "North Macedonia", "Norway", "Poland", "Portugal", "Romania", "Russia", "San Marino", "Serbia", "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland", "Ukraine", "United Kingdom", "Turkey", "Georgia", "Armenia", "Azerbaijan"],
+  "Africa": ["Algeria", "Angola", "Benin", "Botswana", "Burkina Faso", "Burundi", "Cabo Verde", "Cameroon", "Central African Republic", "Chad", "Comoros", "Congo", "Congo (DRC)", "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea", "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana", "Guinea", "Guinea-Bissau", "Côte d'Ivoire", "Kenya", "Lesotho", "Liberia", "Libya", "Madagascar", "Malawi", "Mali", "Mauritania", "Mauritius", "Morocco", "Mozambique", "Namibia", "Niger", "Nigeria", "Rwanda", "Senegal", "Seychelles", "Sierra Leone", "Somalia", "South Africa", "Sudan", "Tanzania", "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"],
+  "South America": ["Brazil", "Argentina", "Colombia", "Peru", "Chile", "Venezuela", "Ecuador", "Bolivia", "Paraguay", "Uruguay", "Guyana", "Suriname"],
+  "Central America & Mexico": ["Mexico", "Guatemala", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama"],
+  "Caribbean": ["Cuba", "Dominican Republic", "Haiti"],
+};
+let combinedRegions = new Set(); // region names currently shown as one merged column
+
 let hiddenScopes = new Set(); // countries explicitly hidden from the grid — empty means show all
 let scopePanelOpen = false; // tracked separately since the panel gets rebuilt on every checkbox click
+let regionPanelOpen = false;
 
 function renderBenchmarkGrid(){
   const area = document.getElementById("benchmarkGridArea");
@@ -2443,51 +2465,74 @@ function renderBenchmarkGrid(){
 
   const teams = [...new Set(benchmarkRows.map(r=>r.team))];
   const allScopes = [...new Set(benchmarkRows.map(r=>r.scope))];
-  const scopes = allScopes.filter(s => !hiddenScopes.has(s));
   const [curStart, curEnd] = benchmarkPeriod.split("_");
   const rowsForPeriod = benchmarkRows.filter(r=> r.start_date===curStart && r.end_date===curEnd);
-  const globalMax = Math.max(1, ...rowsForPeriod.filter(r=>scopes.includes(r.scope)).map(r=>Number(r.preview_result)||0));
 
-  // Per-row and per-column maxes, computed once, used only when zoomed —
-  // this is what lets "which country matters most to this one team" or
-  // "which team is strongest in this one country" be answered at all, since
-  // the global scale flattens that out by design.
+  // Countries that belong to any currently-combined region disappear from
+  // the individual list entirely — they only exist inside the merged total
+  // now, never shown twice.
+  const combinedCountrySet = new Set();
+  combinedRegions.forEach(name => (REGIONS[name] || []).forEach(c => combinedCountrySet.add(c)));
+  const individualScopes = allScopes.filter(s => !hiddenScopes.has(s) && !combinedCountrySet.has(s));
+
+  // One unified column list — plain countries and combined regions rendered
+  // identically everywhere except how their value is computed.
+  const columns = [
+    ...individualScopes.map(s => ({ key:s, label:s, isRegion:false })),
+    ...[...combinedRegions].map(name => ({ key:"region:"+name, label:name, isRegion:true, region:name }))
+  ];
+
+  function valueFor(team, col){
+    if(!col.isRegion){
+      const match = rowsForPeriod.find(r=>r.team===team && r.scope===col.key);
+      return match ? { val: Number(match.preview_result)||0, present:true } : { val:0, present:false };
+    }
+    const members = REGIONS[col.region] || [];
+    const matches = rowsForPeriod.filter(r => r.team===team && members.includes(r.scope));
+    const sum = matches.reduce((s,r)=> s + (Number(r.preview_result)||0), 0);
+    const presentCount = new Set(matches.map(r=>r.scope)).size;
+    return { val: sum, present: presentCount>0, presentCount, totalCount: members.length };
+  }
+
+  const globalMax = Math.max(1, ...teams.flatMap(t => columns.map(c => valueFor(t,c)).filter(v=>v.present).map(v=>v.val)));
   const rowMax = {}, colMax = {};
   teams.forEach(t=>{
-    rowMax[t] = Math.max(1, ...rowsForPeriod.filter(r=>r.team===t).map(r=>Number(r.preview_result)||0));
+    rowMax[t] = Math.max(1, ...columns.map(c=>valueFor(t,c)).filter(v=>v.present).map(v=>v.val));
   });
-  scopes.forEach(s=>{
-    colMax[s] = Math.max(1, ...rowsForPeriod.filter(r=>r.scope===s).map(r=>Number(r.preview_result)||0));
+  columns.forEach(c=>{
+    colMax[c.key] = Math.max(1, ...teams.map(t=>valueFor(t,c)).filter(v=>v.present).map(v=>v.val));
   });
 
   const periodOptions = periods.map(p=>`<option value="${p.key}" ${p.key===benchmarkPeriod?'selected':''}>${fmtDate(p.start)} → ${fmtDate(p.end)}</option>`).join("");
   const zoomLabel = heatZoom ? (heatZoom.type==='team' ? `Zoomed: ${heatZoom.value} (its own countries, relative to each other)` : `Zoomed: ${heatZoom.value} (all teams, relative to each other here)`) : null;
 
-  const headCells = scopes.map(s=>{
-    const isZoomed = heatZoom && heatZoom.type==='scope' && heatZoom.value===s;
-    return `<th class="num heat-toggle" data-scope-header="${s}" style="${isZoomed?'color:var(--accent);':''}">${s}</th>`;
+  const headCells = columns.map(c=>{
+    const isZoomed = heatZoom && heatZoom.type==='scope' && heatZoom.value===c.key;
+    return `<th class="num heat-toggle" data-scope-header="${c.key}" style="${isZoomed?'color:var(--accent);':''}${c.isRegion?'font-style:italic;':''}" title="${c.isRegion?'Combined region — click for the breakdown':''}">${c.label}${c.isRegion?' *':''}</th>`;
   }).join("");
 
   let bodyRows = "";
   teams.forEach(t=>{
     const isRowZoomed = heatZoom && heatZoom.type==='team' && heatZoom.value===t;
     let cells = `<td class="heat-toggle" data-team-header="${t}" style="${isRowZoomed?'color:var(--accent);':''}">${t}</td>`;
-    scopes.forEach(s=>{
-      const match = rowsForPeriod.find(r=>r.team===t && r.scope===s);
-      if(match){
-        const val = Number(match.preview_result)||0;
+    columns.forEach(c=>{
+      const v = valueFor(t, c);
+      if(v.present){
         let alpha;
         if(heatZoom && heatZoom.type==='team'){
-          alpha = heatZoom.value===t ? (0.08 + (val/rowMax[t])*0.30) : 0.03;
+          alpha = heatZoom.value===t ? (0.08 + (v.val/rowMax[t])*0.30) : 0.03;
         } else if(heatZoom && heatZoom.type==='scope'){
-          alpha = heatZoom.value===s ? (0.08 + (val/colMax[s])*0.30) : 0.03;
+          alpha = heatZoom.value===c.key ? (0.08 + (v.val/colMax[c.key])*0.30) : 0.03;
         } else {
-          alpha = 0.08 + (val/globalMax)*0.30;
+          alpha = 0.08 + (v.val/globalMax)*0.30;
         }
-        const isActive = activeTrendCell && activeTrendCell.team===t && activeTrendCell.scope===s;
-        cells += `<td class="num" data-team="${t}" data-scope="${s}" style="cursor:pointer;background:rgba(29,158,117,${alpha.toFixed(2)});${isActive?'outline:2px solid var(--accent);outline-offset:-2px;':''}">${val.toLocaleString()}</td>`;
+        const isActive = activeTrendCell && activeTrendCell.team===t && activeTrendCell.scope===c.key;
+        const label = c.isRegion ? `${v.val.toLocaleString()} (${v.presentCount}/${v.totalCount})` : v.val.toLocaleString();
+        cells += `<td class="num" data-team="${t}" data-scope="${c.key}" style="cursor:pointer;background:rgba(29,158,117,${alpha.toFixed(2)});${isActive?'outline:2px solid var(--accent);outline-offset:-2px;':''}">${label}</td>`;
+      } else if(c.isRegion){
+        cells += `<td class="num" data-team="${t}" data-scope="${c.key}" style="cursor:pointer;color:var(--muted-2);">0 (0/${v.totalCount})</td>`;
       } else {
-        cells += `<td class="num" data-team="${t}" data-scope="${s}" data-missing="1"><button class="ghost" style="font-size:11px;padding:2px 8px;">+</button></td>`;
+        cells += `<td class="num" data-team="${t}" data-scope="${c.key}" data-missing="1"><button class="ghost" style="font-size:11px;padding:2px 8px;">+</button></td>`;
       }
     });
     bodyRows += `<tr>${cells}</tr>`;
@@ -2506,8 +2551,15 @@ function renderBenchmarkGrid(){
           <div class="ms-panel" id="scopeVisPanel"></div>
         </div>
       </div>
+      <div class="field" style="max-width:280px;">
+        <label>Regions</label>
+        <div class="multiselect" id="regionPicker">
+          <button type="button" class="ms-toggle" id="regionToggle">Select regions</button>
+          <div class="ms-panel" id="regionPanel"></div>
+        </div>
+      </div>
     </div>
-    <div class="hint" style="margin-bottom:8px;">Click a team name or a country header to shade that row/column by its own values instead of the whole grid's. ${zoomLabel ? `<span style="color:var(--accent);">${zoomLabel}</span> — click it again to return to the overall view.` : ''}</div>
+    <div class="hint" style="margin-bottom:8px;">Click a team name or a country/region header to shade that row/column by its own values instead of the whole grid's. ${zoomLabel ? `<span style="color:var(--accent);">${zoomLabel}</span> — click it again to return to the overall view.` : ''} ${combinedRegions.size ? '<br><i>*</i> combined region columns show total (countries with data / countries defined) — click one for the full breakdown.' : ''}</div>
     <div style="overflow-x:auto;border:1px solid var(--line);border-radius:4px;">
       <table class="bm-grid">
         <thead><tr><th></th>${headCells}</tr></thead>
@@ -2531,8 +2583,8 @@ function renderBenchmarkGrid(){
     </div>
     ${allScopes.map(s => `
       <label class="ms-item">
-        <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"}>
-        <span>${s}</span>
+        <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"} ${combinedCountrySet.has(s) ? "disabled" : ""}>
+        <span>${s}${combinedCountrySet.has(s) ? ' (combined into a region below)' : ''}</span>
       </label>
     `).join("")}
   `;
@@ -2564,11 +2616,55 @@ function renderBenchmarkGrid(){
     scopePanelOpen = !scopePanelOpen;
     scopeVisPanel.classList.toggle("open", scopePanelOpen);
   });
+
+  // Regions picker: each region gets two independent actions — Combine
+  // (merge its countries into one column) and Split (show only this
+  // region's countries, individually). Both work off the FULL region
+  // definition, not whatever's currently hidden in "Countries shown".
+  const regionPanel = document.getElementById("regionPanel");
+  regionPanel.innerHTML = Object.keys(REGIONS).map(name=>{
+    const isCombined = combinedRegions.has(name);
+    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12.5px;">
+      <span style="flex:1;">${name}</span>
+      <button type="button" class="ghost" data-combine-region="${name}" style="font-size:10.5px;padding:2px 6px;${isCombined?'color:var(--accent);border-color:var(--accent);':''}">${isCombined?'✓ Combined':'Combine'}</button>
+      <button type="button" class="ghost" data-split-region="${name}" style="font-size:10.5px;padding:2px 6px;">Split</button>
+    </div>`;
+  }).join("");
+  if(regionPanelOpen) regionPanel.classList.add("open");
+
+  regionPanel.querySelectorAll("[data-combine-region]").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const name = btn.dataset.combineRegion;
+      if(combinedRegions.has(name)) combinedRegions.delete(name); else combinedRegions.add(name);
+      renderBenchmarkGrid();
+    });
+  });
+  regionPanel.querySelectorAll("[data-split-region]").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const name = btn.dataset.splitRegion;
+      combinedRegions.delete(name); // showing individually, not merged
+      const members = new Set(REGIONS[name] || []);
+      allScopes.forEach(s => { if(members.has(s)) hiddenScopes.delete(s); else hiddenScopes.add(s); });
+      renderBenchmarkGrid();
+    });
+  });
+  document.getElementById("regionToggle").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    regionPanelOpen = !regionPanelOpen;
+    regionPanel.classList.toggle("open", regionPanelOpen);
+  });
   document.addEventListener("click", (e)=>{
-    const picker = document.getElementById("scopeVisPicker");
-    if(picker && !picker.contains(e.target)){
+    const scopePicker = document.getElementById("scopeVisPicker");
+    if(scopePicker && !scopePicker.contains(e.target)){
       scopeVisPanel.classList.remove("open");
       scopePanelOpen = false;
+    }
+    const regionPicker = document.getElementById("regionPicker");
+    if(regionPicker && !regionPicker.contains(e.target)){
+      regionPanel.classList.remove("open");
+      regionPanelOpen = false;
     }
   });
 
@@ -2608,6 +2704,39 @@ function renderBenchmarkTrend(){
   }
   const { team, scope } = activeTrendCell;
   const [curStart, curEnd] = benchmarkPeriod.split("_");
+
+  if(scope.startsWith("region:")){
+    const regionName = scope.slice("region:".length);
+    const members = REGIONS[regionName] || [];
+    const rowsForPeriod = benchmarkRows.filter(r=> r.start_date===curStart && r.end_date===curEnd);
+    const withData = members.filter(c => rowsForPeriod.some(r=>r.team===team && r.scope===c));
+    const missing = members.filter(c => !withData.includes(c));
+    const total = withData.reduce((s,c)=>{
+      const r = rowsForPeriod.find(r=>r.team===team && r.scope===c);
+      return s + (r ? Number(r.preview_result)||0 : 0);
+    }, 0);
+
+    let html = `
+      <div class="divider"></div>
+      <div class="section-title">${team} · ${regionName} (combined) — ${fmtDate(curStart)} → ${fmtDate(curEnd)}</div>
+      <div style="margin-bottom:8px;font-family:var(--mono);font-size:13px;">Total: ${total.toLocaleString()} across ${withData.length} of ${members.length} countries in this region</div>
+      <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;"><tbody>`;
+    withData.sort((a,b)=>a.localeCompare(b)).forEach(c=>{
+      const r = rowsForPeriod.find(r=>r.team===team && r.scope===c);
+      const val = Number(r.preview_result)||0;
+      html += `<tr><td style="padding:5px 10px;">${c}</td><td style="padding:5px 10px;text-align:right;">${val.toLocaleString()}</td><td></td></tr>`;
+    });
+    missing.sort((a,b)=>a.localeCompare(b)).forEach(c=>{
+      html += `<tr><td style="padding:5px 10px;color:var(--muted-2);">${c}</td><td style="padding:5px 10px;text-align:right;color:var(--muted-2);">— no data yet</td><td style="padding:5px 10px;"><button class="ghost" data-region-missing="${c}" style="font-size:11px;padding:2px 8px;">+ Create</button></td></tr>`;
+    });
+    html += `</tbody></table>`;
+    panel.innerHTML = html;
+    panel.querySelectorAll("[data-region-missing]").forEach(btn=>{
+      btn.addEventListener("click", ()=> goCreateFromBenchmark(team, btn.dataset.regionMissing, curStart, curEnd));
+    });
+    return;
+  }
+
   const current = benchmarkRows.find(r=>r.team===team && r.scope===scope && r.start_date===curStart && r.end_date===curEnd);
   if(!current){ panel.innerHTML = ""; return; }
   const currentVal = Number(current.preview_result) || 0;
