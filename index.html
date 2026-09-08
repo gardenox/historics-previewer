@@ -707,6 +707,12 @@ async function fetchAllHistorics(searchId, onPageLoaded){
 function toStartISO(dateStr){ return dateStr + "T00:00:00Z"; }
 function toEndISO(dateStr){ return dateStr + "T23:59:59Z"; }
 function fmtDate(iso){ return iso ? iso.slice(0,10) : "—"; }
+// Escapes a string for safe use inside a double-quoted HTML attribute.
+// Order matters: & must be escaped first, or the &quot; we add for " would
+// itself get double-escaped into &amp;quot;.
+function escAttr(s){
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 // ---------- Connect ----------
 const gateEl = document.getElementById("gate");
@@ -1078,7 +1084,7 @@ function renderResults(area, nodes, context){
       if(!parsed){
         actionHtml = `<span style="color:var(--muted-2);font-size:10.5px;" title="This search's name doesn't follow the 'Team - Country' convention">— use Teams tab</span>`;
       } else if(isAlreadyInBenchmark(context.searchId, "X", r.startDate, r.endDate)){
-        actionHtml = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
+        actionHtml = `<button class="ghost bm-row-remove" data-row-index="${i}" style="font-size:11px;padding:3px 8px;color:var(--done);border-color:var(--done);" title="Click to remove from the benchmark">✓ In benchmark</button>`;
       } else {
         actionHtml = `<button class="ghost bm-row-add" data-row-index="${i}" style="font-size:11px;padding:3px 8px;">Add to benchmark</button>`;
       }
@@ -1102,9 +1108,27 @@ function renderResults(area, nodes, context){
   area.innerHTML = html;
 
   if(context && context.searchId && parsed){
-    area.querySelectorAll(".bm-row-add").forEach(btn=>{
+    function makeAddCell(r, i){
+      const btn = document.createElement("button");
+      btn.className = "ghost";
+      btn.dataset.rowIndex = i;
+      btn.style.cssText = "font-size:11px;padding:3px 8px;";
+      btn.textContent = "Add to benchmark";
+      wireAdd(btn, r, i);
+      return btn;
+    }
+    function makeRemoveCell(r, i){
+      const btn = document.createElement("button");
+      btn.className = "ghost";
+      btn.dataset.rowIndex = i;
+      btn.style.cssText = "font-size:11px;padding:3px 8px;color:var(--done);border-color:var(--done);";
+      btn.title = "Click to remove from the benchmark";
+      btn.textContent = "✓ In benchmark";
+      wireRemove(btn, r, i);
+      return btn;
+    }
+    function wireAdd(btn, r, i){
       btn.addEventListener("click", async ()=>{
-        const r = rows[Number(btn.dataset.rowIndex)];
         btn.disabled = true;
         btn.textContent = "Adding…";
         const row = {
@@ -1128,12 +1152,33 @@ function renderResults(area, nodes, context){
             throw new Error(`HTTP ${res.status}: ${t.slice(0,200)}`);
           }
           await loadBenchmarkGrid();
-          btn.outerHTML = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
+          btn.replaceWith(makeRemoveCell(r, i));
         }catch(err){
           btn.disabled = false;
           btn.textContent = "Retry add";
         }
       });
+    }
+    function wireRemove(btn, r, i){
+      btn.addEventListener("click", async ()=>{
+        btn.disabled = true;
+        btn.textContent = "Removing…";
+        try{
+          await deleteBenchmarkEntry(context.searchId, fmtDateISO(r.startDate), fmtDateISO(r.endDate));
+          btn.replaceWith(makeAddCell(r, i));
+        }catch(err){
+          btn.disabled = false;
+          btn.textContent = "Retry remove";
+        }
+      });
+    }
+    area.querySelectorAll(".bm-row-add").forEach(btn=>{
+      const i = Number(btn.dataset.rowIndex);
+      wireAdd(btn, rows[i], i);
+    });
+    area.querySelectorAll(".bm-row-remove").forEach(btn=>{
+      const i = Number(btn.dataset.rowIndex);
+      wireRemove(btn, rows[i], i);
     });
   }
 }
@@ -1577,7 +1622,7 @@ function renderTeamBlocksTable(area, nodes){
     const inBenchmark = canAdd && isAlreadyInBenchmark(searchId, "X", n.startDate, n.endDate);
     let actionHtml = "";
     if(inBenchmark){
-      actionHtml = `<span style="color:var(--done);font-size:11px;" title="Already saved to the Benchmark tab">✓ In benchmark</span>`;
+      actionHtml = `<button class="ghost" data-remove-id="${n.id}" style="font-size:11px;padding:3px 8px;color:var(--done);border-color:var(--done);" title="Click to remove from the benchmark">✓ In benchmark</button>`;
     } else if(canAdd){
       actionHtml = `<button class="ghost" data-add-id="${n.id}" style="font-size:11px;padding:3px 8px;">Add to benchmark</button>`;
     }
@@ -1592,10 +1637,29 @@ function renderTeamBlocksTable(area, nodes){
     <div class="board-head" style="grid-template-columns: 1fr 110px 140px 150px;"><div>Window</div><div class="num">X result</div><div>Status</div><div></div></div>
     ${rowsHtml}
   </div>`;
-  area.querySelectorAll("[data-add-id]").forEach(btn=>{
+
+  function makeAddButton(node){
+    const btn = document.createElement("button");
+    btn.className = "ghost";
+    btn.dataset.addId = node.id;
+    btn.style.cssText = "font-size:11px;padding:3px 8px;";
+    btn.textContent = "Add to benchmark";
+    wireAddButton(btn, node);
+    return btn;
+  }
+  function makeRemoveButton(node){
+    const btn = document.createElement("button");
+    btn.className = "ghost";
+    btn.dataset.removeId = node.id;
+    btn.style.cssText = "font-size:11px;padding:3px 8px;color:var(--done);border-color:var(--done);";
+    btn.title = "Click to remove from the benchmark";
+    btn.textContent = "✓ In benchmark";
+    wireRemoveButton(btn, node);
+    return btn;
+  }
+  function wireAddButton(btn, node){
     btn.addEventListener("click", async ()=>{
-      const { team, country, searchId } = teamsState.activeSearch;
-      const node = sorted.find(n => String(n.id) === btn.dataset.addId);
+      const { team, country } = teamsState.activeSearch;
       const searchEntry = getTeamCoverage(team)[country];
       const row = {
         search_id: Number(searchId),
@@ -1617,15 +1681,35 @@ function renderTeamBlocksTable(area, nodes){
           const t = await res.text();
           throw new Error(`HTTP ${res.status}: ${t.slice(0,200)}`);
         }
-        // Refresh the in-memory benchmark data so this and any other
-        // still-visible rows immediately reflect the new saved state.
         await loadBenchmarkGrid();
-        btn.outerHTML = `<span style="color:var(--done);font-size:11px;">✓ In benchmark</span>`;
+        btn.replaceWith(makeRemoveButton(node));
       }catch(err){
         btn.disabled = false;
         btn.textContent = "Retry add";
       }
     });
+  }
+  function wireRemoveButton(btn, node){
+    btn.addEventListener("click", async ()=>{
+      btn.disabled = true;
+      btn.textContent = "Removing…";
+      try{
+        await deleteBenchmarkEntry(searchId, fmtDateISO(node.startDate), fmtDateISO(node.endDate));
+        btn.replaceWith(makeAddButton(node));
+      }catch(err){
+        btn.disabled = false;
+        btn.textContent = "Retry remove";
+      }
+    });
+  }
+
+  area.querySelectorAll("[data-add-id]").forEach(btn=>{
+    const node = sorted.find(n => String(n.id) === btn.dataset.addId);
+    wireAddButton(btn, node);
+  });
+  area.querySelectorAll("[data-remove-id]").forEach(btn=>{
+    const node = sorted.find(n => String(n.id) === btn.dataset.removeId);
+    wireRemoveButton(btn, node);
   });
 }
 
@@ -1654,8 +1738,8 @@ function renderTeamConfirmCreate(root){
     <div class="hint" style="cursor:pointer;margin-bottom:14px;" id="teamBackBtn2">&larr; ${team} — country coverage</div>
     <div class="section-title">Create new search</div>
     ${!globalBoolean ? `<div class="msg error">No "${team} - Global" search found — can't auto-generate a boolean without it. Create the Global search first, or type one in manually below.</div>` : ""}
-    <div class="field"><label>Name</label><input type="text" id="genName" value="${generatedName}"></div>
-    <div class="field"><label>Boolean expression</label><input type="text" id="genBoolean" value="${generatedBoolean}"></div>
+    <div class="field"><label>Name</label><input type="text" id="genName" value="${escAttr(generatedName)}"></div>
+    <div class="field"><label>Boolean expression</label><input type="text" id="genBoolean" value="${escAttr(generatedBoolean)}"></div>
     <div class="field"><label>Category</label><input type="text" value="X" readonly style="max-width:120px;"></div>
     <div class="hint">Auto-generated from the Global search's boolean, per your naming convention — both fields are editable before submitting. Nothing is created until you confirm.</div>
     <button class="solid" id="confirmCreateBtn2">Confirm &amp; create</button>
@@ -1799,14 +1883,17 @@ function renderEvoBody(){
     return;
   }
   const evoSearchId = getTeamCoverage(evoState.team)[evoState.country]?.id;
-  const rows = evoState.historics.map(n=>{
+  const rows = evoState.historics.map((n,i)=>{
     const checked = evoState.selectedIds.has(n.id);
     const inBenchmark = evoSearchId && isAlreadyInBenchmark(evoSearchId, "X", n.startDate, n.endDate);
+    const benchmarkCellHtml = inBenchmark
+      ? `<button class="ghost evo-bm-remove" data-idx="${i}" style="font-size:10.5px;padding:2px 6px;color:var(--done);border-color:var(--done);width:100px;" title="Click to remove from the benchmark">✓ In benchmark</button>`
+      : `<span style="width:100px;display:inline-block;"></span>`;
     return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;font-family:var(--mono);font-size:12.5px;cursor:pointer;">
       <input type="checkbox" data-evo-id="${n.id}" ${checked?'checked':''} style="width:auto;">
       <span style="flex:1;">${fmtDate(n.startDate)} → ${fmtDate(n.endDate)}</span>
       <span style="width:90px;text-align:right;">${(n.previewResult||0).toLocaleString()}</span>
-      <span style="width:100px;text-align:right;font-size:10.5px;color:var(--done);">${inBenchmark ? '✓ In benchmark' : ''}</span>
+      ${benchmarkCellHtml}
     </label>`;
   }).join("");
 
@@ -1820,6 +1907,25 @@ function renderEvoBody(){
     <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:4px;padding:4px;">${rows}</div>
   `;
   document.getElementById("evoRequestPeriodBtn").addEventListener("click", goToTeamsFromEvolution);
+  body.querySelectorAll(".evo-bm-remove").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      // Stop the click reaching the enclosing <label>, which would
+      // otherwise also toggle that row's checkbox — this button needs to
+      // act entirely on its own.
+      e.preventDefault();
+      e.stopPropagation();
+      const n = evoState.historics[Number(btn.dataset.idx)];
+      btn.disabled = true;
+      btn.textContent = "Removing…";
+      try{
+        await deleteBenchmarkEntry(evoSearchId, fmtDateISO(n.startDate), fmtDateISO(n.endDate));
+        renderEvoBody();
+      }catch(err){
+        btn.disabled = false;
+        btn.textContent = "Retry remove";
+      }
+    });
+  });
   body.querySelectorAll("[data-evo-id]").forEach(cb=>{
     cb.addEventListener("change", ()=>{
       const id = Number(cb.dataset.evoId);
@@ -2522,15 +2628,23 @@ function renderBenchmarkTrend(){
 
 // Removes exactly one period for this search — not every period, which is
 // the whole reason the DELETE endpoint needed fixing to accept dates.
+// Shared by every "remove from benchmark" action across the app — the
+// Benchmark tab's own trend panel, and now the Teams/Preview/Evolution
+// tabs too, since adding was already made contextual and removing should
+// be just as easy from wherever you're looking.
+async function deleteBenchmarkEntry(searchId, startDate, endDate){
+  const res = await fetch(`/api/benchmark?search_id=${encodeURIComponent(searchId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`, { method: "DELETE" });
+  if(!res.ok){
+    const errText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${errText.slice(0,200)}`);
+  }
+  await loadBenchmarkGrid(); // keeps benchmarkRows fresh everywhere it's read from, and refreshes the Benchmark tab's own grid
+}
+
 async function removeBenchmarkWindow(searchId, startDate, endDate){
   try{
-    const res = await fetch(`/api/benchmark?search_id=${encodeURIComponent(searchId)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`, { method: "DELETE" });
-    if(!res.ok){
-      const errText = await res.text();
-      throw new Error(`HTTP ${res.status}: ${errText.slice(0,200)}`);
-    }
     activeTrendCell = null;
-    await loadBenchmarkGrid();
+    await deleteBenchmarkEntry(searchId, startDate, endDate);
   }catch(err){
     document.getElementById("benchmarkStatus").innerHTML = `<div class="msg error">Couldn't remove that period: ${err.message}</div>`;
   }
