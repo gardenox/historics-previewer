@@ -2468,12 +2468,13 @@ function renderBenchmarkGrid(){
   const [curStart, curEnd] = benchmarkPeriod.split("_");
   const rowsForPeriod = benchmarkRows.filter(r=> r.start_date===curStart && r.end_date===curEnd);
 
-  // Countries that belong to any currently-combined region disappear from
-  // the individual list entirely — they only exist inside the merged total
-  // now, never shown twice.
-  const combinedCountrySet = new Set();
-  combinedRegions.forEach(name => (REGIONS[name] || []).forEach(c => combinedCountrySet.add(c)));
-  const individualScopes = allScopes.filter(s => !hiddenScopes.has(s) && !combinedCountrySet.has(s));
+  // Combining a region isn't additive — as soon as ANY region is combined,
+  // the grid narrows to show ONLY combined region columns. Combine 4
+  // regions and you see exactly those 4 columns, nothing else. Un-combine
+  // everything and it falls back to the normal individual-country view.
+  const individualScopes = combinedRegions.size > 0
+    ? []
+    : allScopes.filter(s => !hiddenScopes.has(s));
 
   // One unified column list — plain countries and combined regions rendered
   // identically everywhere except how their value is computed.
@@ -2576,15 +2577,17 @@ function renderBenchmarkGrid(){
   });
 
   const scopeVisPanel = document.getElementById("scopeVisPanel");
+  const anyRegionCombined = combinedRegions.size > 0;
   scopeVisPanel.innerHTML = `
     <div style="display:flex;gap:8px;padding:4px 8px 8px;border-bottom:1px solid var(--line);margin-bottom:4px;">
       <button type="button" class="ghost" id="scopeSelectAllBtn" style="font-size:11px;padding:3px 8px;">Select all</button>
       <button type="button" class="ghost" id="scopeSelectNoneBtn" style="font-size:11px;padding:3px 8px;">Unselect all</button>
     </div>
+    ${anyRegionCombined ? `<div class="hint" style="padding:4px 8px;">Individual countries are hidden while any region is combined — uncombine every region to use this again.</div>` : ''}
     ${allScopes.map(s => `
       <label class="ms-item">
-        <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"} ${combinedCountrySet.has(s) ? "disabled" : ""}>
-        <span>${s}${combinedCountrySet.has(s) ? ' (combined into a region below)' : ''}</span>
+        <input type="checkbox" value="${s}" ${hiddenScopes.has(s) ? "" : "checked"} ${anyRegionCombined ? "disabled" : ""}>
+        <span>${s}</span>
       </label>
     `).join("")}
   `;
