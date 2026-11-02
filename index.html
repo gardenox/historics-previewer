@@ -1205,6 +1205,11 @@ function renderResults(area, nodes, context){
 
 // ================= TEAMS TAB =================
 // REPLACE with your real fixed list of teams to always benchmark.
+// Older benchmark rows saved under a different team name. Mapped to the
+// name used in TEAMS_TO_BENCHMARK and in search names when the grid loads,
+// so old and new rows sit on one row and "+" cells find the right searches.
+const TEAM_ALIASES = { "Bayern Munich": "Bayern" };
+
 const TEAMS_TO_BENCHMARK = ["Man City", "Man United", "Arsenal", "Tottenham", "Liverpool", "Real Madrid", "Barcelona", "Chelsea", "Borussia Dortmund", "Atletico Madrid", "Juventus", "Inter Milan", "AC Milan", "PSG", "Bayern"];
 
 // Real CountryEnum values, extracted directly from your schema introspection
@@ -2432,7 +2437,9 @@ async function loadBenchmarkGrid(){
     // Defensive filter: the table can theoretically hold non-X rows (old
     // data from before this was X-only, or any future path that isn't
     // careful about it) — the grid and trend panel should never show them.
-    benchmarkRows = (await res.json()).filter(r => r.category === "X");
+    benchmarkRows = (await res.json())
+      .filter(r => r.category === "X")
+      .map(r => ({ ...r, team: TEAM_ALIASES[r.team] || r.team }));
     const teamCount = new Set(benchmarkRows.map(r=>r.team)).size;
     statusEl.innerHTML = `<div class="hint">Loaded ${benchmarkRows.length} row${benchmarkRows.length===1?"":"s"} across ${teamCount} team${teamCount===1?"":"s"} from Supabase.</div>`;
     renderBenchmarkGrid();
