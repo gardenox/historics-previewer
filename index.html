@@ -2831,5 +2831,392 @@ addPreviewCard();
 renderTeamsRoot();
 renderEvolutionRoot();
 </script>
+<!-- =====================================================================
+     BULK CREATE HISTORIC — add-on
+     Paste this whole block just before </body>, AFTER the existing <script>.
+     It injects its own "Bulk create" tab and reuses the existing helpers
+     (gql, CREATE_MUTATION, fetchAllHistorics, createDateRangePicker,
+     parseTeamCountryFromSearchName, isAlreadyInBenchmark, loadBenchmarkGrid…).
+     ===================================================================== -->
+<script>
+(function(){
+  // createHistoric takes a single searchId, so this fires one call per
+  // search, paced so a batch of 10–20 doesn't trip the API's rate limits.
+  const BULK_DELAY_MS = 750;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const escHtml = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  const bulk = {
+    selected: new Set(),   // search ids (strings)
+    teamFilter: "",
+    textFilter: "",
+    showAll: false,
+    running: false,
+    stopPolling: false,
+    jobs: [],
+    window: null
+  };
+
+  // ---------- inject tab + panel ----------
+  const tabsBar = document.querySelector(".tabs");
+  const anyPanel = document.querySelector(".tabpanel");
+  if(!tabsBar || !anyPanel || typeof gql !== "function"){
+    console.warn("[Bulk create] Main tool not found on this page. Paste this script inside the benchmarking tool's HTML, just before </body> and after its main <script>.");
+    return;
+  }
+  const createTab = tabsBar.querySelector('.tab[data-tab="create"]');
+  const tab = document.createElement("div");
+  tab.className = "tab";
+  tab.dataset.tab = "bulk";
+  tab.textContent = "Bulk create";
+  if(createTab) createTab.after(tab); else tabsBar.appendChild(tab);
+
+  const panel = document.createElement("div");
+  panel.className = "tabpanel";
+  panel.id = "panel-bulk";
+  const createPanel = document.getElementById("panel-create");
+  if(createPanel) createPanel.after(panel); else anyPanel.parentNode.appendChild(panel);
+
+  tab.addEventListener("click", ()=>{
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".tabpanel").forEach(p=>p.classList.remove("active"));
+    tab.classList.add("active");
+    panel.classList.add("active");
+    renderList();
+  });
+
+  const checkLabel = 'class="ms-item" style="text-transform:none;letter-spacing:0;color:var(--text);margin:0;"';
+
+  panel.innerHTML = `
+    <div class="section-title">1. Pick searches</div>
+    <div class="row">
+      <div class="field">
+        <label>Team</label>
+        <select id="bulkTeam">
+          <option value="">All teams</option>
+          ${TEAMS_TO_BENCHMARK.map(t=>`<option value="${escAttr(t)}">${escHtml(t)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Filter by name</label>
+        <input type="text" id="bulkText" placeholder="e.g. Spain, Global…" autocomplete="off">
+      </div>
+    </div>
+    <div class="row" style="align-items:center;margin-bottom:8px;">
+      <div style="flex:1;" class="hint" id="bulkCount"></div>
+      <div style="flex:0 0 auto;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="ghost" id="bulkSelVisible" type="button" style="font-size:11px;padding:4px 10px;">Select all shown</button>
+        <button class="ghost" id="bulkClear" type="button" style="font-size:11px;padding:4px 10px;">Clear selection</button>
+        <button class="ghost" id="bulkRefresh" type="button" style="font-size:11px;padding:4px 10px;">Refresh search list</button>
+      </div>
+    </div>
+    <div id="bulkList" style="max-height:300px;overflow-y:auto;border:1px solid var(--line);border-radius:4px;padding:4px;"></div>
+    <div class="hint" id="bulkScope" style="cursor:pointer;margin-top:6px;"></div>
+
+    <div class="divider"></div>
+    <div class="section-title">2. Pick the window</div>
+    <div class="daterange" id="bulkDateRange">
+      <button type="button" class="dr-toggle">Select dates…</button>
+      <div class="dr-panel">
+        <div class="dr-nav">
+          <button type="button" class="ghost dr-prev">‹</button>
+          <span class="dr-month-label"></span>
+          <button type="button" class="ghost dr-next">›</button>
+        </div>
+        <div class="dr-grid"></div>
+        <div class="dr-actions"><button type="button" class="ghost dr-clear">Clear</button></div>
+      </div>
+    </div>
+    <div style="margin-top:12px;">
+      <label ${checkLabel}><input type="checkbox" id="bulkSkipExisting" checked style="width:auto;"> <span>Skip searches that already have an X historic for this exact window</span></label>
+      <label ${checkLabel}><input type="checkbox" id="bulkAutoBenchmark" checked style="width:auto;"> <span>Add each result to the benchmark once it's previewed</span></label>
+    </div>
+
+    <div class="divider"></div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="solid" id="bulkRunBtn" type="button">Create historics</button>
+      <button class="ghost" id="bulkStopBtn" type="button" style="display:none;">Stop watching</button>
+    </div>
+    <div id="bulkMsg"></div>
+    <div id="bulkBoard" style="margin-top:12px;"></div>
+  `;
+
+  const picker = createDateRangePicker(document.getElementById("bulkDateRange"));
+  const runBtn = document.getElementById("bulkRunBtn");
+  const stopBtn = document.getElementById("bulkStopBtn");
+
+  // ---------- search list ----------
+  function filteredSearches(){
+    return (appState.searches || []).filter(s=>{
+      const name = s.name || "";
+      if(!bulk.showAll && !TEAMS_TO_BENCHMARK.some(t => name.startsWith(t + " - "))) return false;
+      if(bulk.teamFilter && !name.startsWith(bulk.teamFilter + " - ")) return false;
+      if(bulk.textFilter && !name.toLowerCase().includes(bulk.textFilter.toLowerCase())) return false;
+      return true;
+    }).sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+  }
+
+  function updateCount(){
+    const n = bulk.selected.size;
+    const shownIds = new Set(filteredSearches().map(s=>String(s.id)));
+    const hidden = [...bulk.selected].filter(id => !shownIds.has(id)).length;
+    document.getElementById("bulkCount").textContent =
+      `${n} search${n===1?"":"es"} selected` + (hidden ? ` (${hidden} hidden by the current filter)` : "");
+  }
+
+  function renderList(){
+    const listEl = document.getElementById("bulkList");
+    const visible = filteredSearches();
+    if(!(appState.searches || []).length){
+      listEl.innerHTML = `<div class="sp-empty">No searches loaded yet — connect first.</div>`;
+    } else if(!visible.length){
+      listEl.innerHTML = `<div class="sp-empty">No searches match this filter.</div>`;
+    } else {
+      listEl.innerHTML = visible.map(s => `
+        <label ${checkLabel}>
+          <input type="checkbox" data-bulk-id="${escAttr(s.id)}" ${bulk.selected.has(String(s.id)) ? "checked" : ""} style="width:auto;">
+          <span style="flex:1;">${escHtml(s.name || "(untitled)")}</span>
+          <span style="color:var(--muted-2);font-size:11px;">ID ${escHtml(s.id)}</span>
+        </label>`).join("");
+      listEl.querySelectorAll("[data-bulk-id]").forEach(cb=>{
+        cb.addEventListener("change", ()=>{
+          if(cb.checked) bulk.selected.add(cb.dataset.bulkId); else bulk.selected.delete(cb.dataset.bulkId);
+          updateCount();
+        });
+      });
+    }
+    document.getElementById("bulkScope").textContent = bulk.showAll
+      ? "Showing all searches — show only my teams"
+      : "Showing only my teams — show all searches";
+    updateCount();
+  }
+
+  document.getElementById("bulkTeam").addEventListener("change", e=>{ bulk.teamFilter = e.target.value; renderList(); });
+  document.getElementById("bulkText").addEventListener("input", e=>{ bulk.textFilter = e.target.value.trim(); renderList(); });
+  document.getElementById("bulkScope").addEventListener("click", ()=>{ bulk.showAll = !bulk.showAll; renderList(); });
+  document.getElementById("bulkSelVisible").addEventListener("click", ()=>{
+    filteredSearches().forEach(s => bulk.selected.add(String(s.id)));
+    renderList();
+  });
+  document.getElementById("bulkClear").addEventListener("click", ()=>{ bulk.selected.clear(); renderList(); });
+  document.getElementById("bulkRefresh").addEventListener("click", async (e)=>{
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = "Refreshing…";
+    await loadSearchesList();
+    btn.disabled = false; btn.textContent = "Refresh search list";
+    renderList();
+  });
+
+  // ---------- status board ----------
+  function isPending(job){
+    return (job.step === "created" || job.step === "exists") && !(job.node && isSettled(job.node.status));
+  }
+
+  function renderBoard(){
+    const el = document.getElementById("bulkBoard");
+    if(!bulk.jobs.length){ el.innerHTML = ""; return; }
+
+    const created = bulk.jobs.filter(j=>j.step==="created").length;
+    const existed = bulk.jobs.filter(j=>j.step==="exists").length;
+    const errors  = bulk.jobs.filter(j=>j.step==="error" || (j.node && isFailed(j.node.status))).length;
+    const done    = bulk.jobs.filter(j=>j.node && isTerminal(j.node.status)).length;
+    const total   = bulk.jobs.reduce((s,j)=> s + ((j.node && isTerminal(j.node.status)) ? (Number(j.node.previewResult)||0) : 0), 0);
+
+    const stepBadge = {
+      queued:   ["Queued","neutral"],
+      checking: ["Checking","st-progress"],
+      creating: ["Creating","st-progress"],
+      exists:   ["Already existed","neutral"],
+      created:  ["Created","st-success"],
+      error:    ["Error","st-error"]
+    };
+    const cols = "grid-template-columns: 1fr 120px 150px 100px 80px;";
+
+    const rows = bulk.jobs.map(j=>{
+      const [stepLabel, stepCls] = stepBadge[j.step] || [j.step,"neutral"];
+      let hist = "—", histCls = "neutral";
+      if(j.node){
+        hist = j.node.status + (!isSettled(j.node.status) && j.node.progress != null ? ` · ${Number(j.node.progress).toFixed(0)}%` : "");
+        histCls = isTerminal(j.node.status) ? "st-success" : isFailed(j.node.status) ? "st-error" : isArchived(j.node.status) ? "st-archived" : "st-progress";
+      }
+      const result = (j.node && isTerminal(j.node.status)) ? (Number(j.node.previewResult)||0).toLocaleString() : "—";
+      const bench = { added:"✓", skipped:"n/a", failed:"failed" }[j.benchmark] || "";
+      return `<div class="board-row" style="${cols}">
+        <div>${escHtml(j.name)}${j.error ? `<div style="color:var(--error);font-size:11px;margin-top:2px;">${escHtml(j.error)}</div>` : ""}</div>
+        <div><span class="badge ${stepCls}">${stepLabel}</span></div>
+        <div><span class="badge ${histCls}">${escHtml(hist)}</span></div>
+        <div class="num">${result}</div>
+        <div class="num">${bench}</div>
+      </div>`;
+    }).join("");
+
+    el.innerHTML = `
+      <div class="hint" style="margin-bottom:8px;">
+        ${fmtDate(bulk.window.startISO)} → ${fmtDate(bulk.window.endISO)} ·
+        ${created} created · ${existed} already existed · ${errors} error${errors===1?"":"s"} ·
+        ${done}/${bulk.jobs.length} previewed · total so far ${total.toLocaleString()}
+      </div>
+      <div class="board">
+        <div class="board-head" style="${cols}"><div>Search</div><div>Request</div><div>Historic</div><div class="num">X result</div><div class="num">Bench</div></div>
+        ${rows}
+      </div>`;
+  }
+
+  // ---------- benchmark ----------
+  async function addSettledToBenchmark(){
+    const rows = [], jobsAdded = [];
+    for(const job of bulk.jobs){
+      if(job.benchmark || !job.node || !isTerminal(job.node.status)) continue;
+      const parsed = parseTeamCountryFromSearchName(job.name);
+      if(!parsed){ job.benchmark = "skipped"; continue; }
+      if(isAlreadyInBenchmark(job.searchId, "X", job.node.startDate, job.node.endDate)){ job.benchmark = "added"; continue; }
+      rows.push({
+        search_id: job.searchId,
+        search_name: job.name,
+        team: parsed.team,
+        scope: parsed.country,
+        category: "X",
+        start_date: fmtDateISO(job.node.startDate),
+        end_date: fmtDateISO(job.node.endDate),
+        preview_result: Number(job.node.previewResult) || 0
+      });
+      jobsAdded.push(job);
+    }
+    if(!rows.length) return;
+    try{
+      const res = await fetch("/api/benchmark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rows)
+      });
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      jobsAdded.forEach(j => j.benchmark = "added");
+      await loadBenchmarkGrid();
+    }catch(err){
+      jobsAdded.forEach(j => { j.benchmark = "failed"; j.error = "Benchmark save failed: " + err.message; });
+    }
+  }
+
+  // ---------- polling ----------
+  function pollJobs(){
+    let ticks = 0;
+    const startedAt = Date.now();
+    bulk.stopPolling = false;
+    stopBtn.style.display = "inline-block";
+
+    async function tick(){
+      if(bulk.stopPolling) return;
+      ticks++;
+      for(const job of bulk.jobs.filter(isPending)){
+        if(bulk.stopPolling) return;
+        try{
+          const { nodes } = await fetchAllHistorics(job.searchId);
+          const ids = job.historicIds.map(String);
+          job.node = nodes.find(n => ids.includes(String(n.id))) || job.node;
+        }catch(err){
+          job.error = err.message;
+        }
+      }
+      if(bulk.window.autoBench) await addSettledToBenchmark();
+      renderBoard();
+
+      if(!bulk.jobs.some(isPending)){
+        stopBtn.style.display = "none";
+        const mins = Math.round((Date.now() - startedAt) / 60000);
+        const benchAdded = bulk.jobs.filter(j=>j.benchmark==="added").length;
+        const benchFailed = bulk.jobs.filter(j=>j.benchmark==="failed").length;
+        let benchNote = "";
+        if(bulk.window.autoBench){
+          benchNote = ` ${benchAdded} result${benchAdded===1?"":"s"} in the benchmark.`;
+          if(benchFailed) benchNote += ` ${benchFailed} couldn't be saved; add those from the Teams tab.`;
+        }
+        document.getElementById("bulkMsg").innerHTML =
+          `<div class="msg ${benchFailed ? "error" : "ok"}">Everything has settled${mins ? ` after ${mins} minute${mins===1?"":"s"}` : ""}.${benchNote}</div>`;
+        return;
+      }
+      setTimeout(tick, ticks < 15 ? 6000 : 20000);
+    }
+    tick();
+  }
+
+  stopBtn.addEventListener("click", ()=>{
+    bulk.stopPolling = true;
+    stopBtn.style.display = "none";
+    document.getElementById("bulkMsg").innerHTML =
+      `<div class="msg info">Stopped watching. The historics keep processing in Pulsar. Check them later on the Teams or Preview tab.</div>`;
+  });
+
+  // ---------- run ----------
+  runBtn.addEventListener("click", async ()=>{
+    if(bulk.running) return;
+    const msg = document.getElementById("bulkMsg");
+    const ids = [...bulk.selected];
+    const { start, end } = picker.getRange();
+
+    if(!ids.length){ msg.innerHTML = `<div class="msg error">Select at least one search.</div>`; return; }
+    if(!start || !end){ msg.innerHTML = `<div class="msg error">Pick both dates first.</div>`; return; }
+
+    const skipExisting = document.getElementById("bulkSkipExisting").checked;
+    const autoBench = document.getElementById("bulkAutoBenchmark").checked;
+
+    if(!confirm(`Create an X historic for ${start} → ${end} on ${ids.length} search${ids.length===1?"":"es"}?`)) return;
+
+    bulk.running = true;
+    bulk.stopPolling = true; // stop any previous batch's watcher
+    runBtn.disabled = true;
+    msg.innerHTML = `<div class="msg info">Submitting one request at a time…</div>`;
+
+    const startISO = toStartISO(start), endISO = toEndISO(end);
+    bulk.window = { startISO, endISO, autoBench };
+    bulk.jobs = ids.map(id=>{
+      const s = (appState.searches || []).find(x => String(x.id) === id);
+      return { searchId: Number(id), name: s ? s.name : `Search ${id}`, step: "queued", historicIds: [], node: null, benchmark: null, error: null };
+    });
+    renderBoard();
+
+    for(const job of bulk.jobs){
+      try{
+        if(skipExisting){
+          job.step = "checking"; renderBoard();
+          const { nodes } = await fetchAllHistorics(job.searchId);
+          const existing = nodes.find(n =>
+            n.category === "X" &&
+            fmtDate(n.startDate) === start &&
+            fmtDate(n.endDate) === end &&
+            !isFailed(n.status) && !isArchived(n.status)
+          );
+          if(existing){
+            job.step = "exists"; job.node = existing; job.historicIds = [existing.id];
+            renderBoard();
+            continue;
+          }
+        }
+        job.step = "creating"; renderBoard();
+        const data = await gql(CREATE_MUTATION, {
+          input: { searchId: job.searchId, categories: ["X"], startDate: startISO, endDate: endISO }
+        });
+        const errs = data?.createHistoric?.errors || [];
+        if(errs.length){
+          job.step = "error";
+          job.error = errs.map(e => e.message).join("; ");
+        } else {
+          job.historicIds = (data?.createHistoric?.historics || []).map(h => h.id);
+          job.step = "created";
+        }
+      }catch(err){
+        job.step = "error";
+        job.error = err.message;
+      }
+      renderBoard();
+      await sleep(BULK_DELAY_MS);
+    }
+
+    bulk.running = false;
+    runBtn.disabled = false;
+    msg.innerHTML = `<div class="msg info">All requests submitted. Watching for previews to finish…</div>`;
+    pollJobs();
+  });
+})();
+</script>
 </body>
 </html>
