@@ -544,7 +544,21 @@ function categoryLabel(code){ return CATEGORY_LABELS[code] || code; }
 let appState = { token: null, endpoint: "/api/graphql", searches: [] };
 
 // ---------- GraphQL helper ----------
-async function gql(query, variables){
+// ---------- API rate limiting ----------
+// Pulsar allows 5 calls/second. Every request goes through gql(), so spacing
+// request starts here keeps the whole tool (all tabs, bulk runs included)
+// at about 3 calls/second, leaving headroom. A 429 is retried with backoff.
+const API_MIN_GAP_MS = 300;
+let apiNextSlot = 0;
+async function waitForApiSlot(){
+  const now = Date.now();
+  const at = Math.max(now, apiNextSlot);
+  apiNextSlot = at + API_MIN_GAP_MS;
+  if(at > now) await new Promise(r => setTimeout(r, at - now));
+}
+
+async function gql(query, variables, attempt = 0){
+  await waitForApiSlot();
   let res;
   try{
     res = await fetch(appState.endpoint, {
@@ -557,6 +571,12 @@ async function gql(query, variables){
     });
   }catch(err){
     throw new Error(`Network/CORS error calling ${appState.endpoint} — the request never reached it. If this is the direct Pulsar URL, it's almost certainly missing CORS headers and needs the local proxy instead. If this is already the proxy URL, make sure pulsar-proxy.js is running.`);
+  }
+  if(res.status === 429 && attempt < 4){
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    const wait = retryAfter > 0 ? retryAfter * 1000 : 1000 * Math.pow(2, attempt);
+    await new Promise(r => setTimeout(r, wait));
+    return gql(query, variables, attempt + 1);
   }
   let json;
   try{
@@ -2842,7 +2862,7 @@ renderEvolutionRoot();
 (function(){
   // createHistoric takes a single searchId, so this fires one call per
   // search, paced so a batch of 10–20 doesn't trip the API's rate limits.
-  const BULK_DELAY_MS = 750;
+  const BULK_DELAY_MS = 0; // pacing is handled by the shared limiter in gql()
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const escHtml = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
